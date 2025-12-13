@@ -1,5 +1,5 @@
 import base64
-import json  # <--- Added
+import json
 import os
 from django.conf import settings
 from django.utils import timezone
@@ -53,19 +53,42 @@ class SaveMaskAPIView(APIView):
         )
         os.makedirs(task_dir, exist_ok=True)
 
-        # 3. Save Mask Image
-        mask_path = os.path.join(task_dir, 'mask.png')
+        # 3. Save Mask Image (PNG)
+        mask_filename = 'mask.png'
+        mask_path = os.path.join(task_dir, mask_filename)
+        
         with open(mask_path, 'wb') as f:
             f.write(mask_bytes)
 
-        # 4. Save Metadata JSON  <--- NEW LOGIC
+        # ---------------------------------------------------------
+        # 4. INJECT PATHS INTO METADATA (The Fix)
+        # ---------------------------------------------------------
+        
+        # Ensure 'meta' key exists
+        if 'meta' not in metadata_data:
+            metadata_data['meta'] = {}
+
+        # Add Absolute System Paths (for internal use)
+        metadata_data['meta']['saved_mask_path'] = mask_path
+        metadata_data['meta']['source_image_path'] = image.file_path
+
+        # Add Web URLs (for frontend display)
+        # Construct relative path: /media/projects/.../mask.png
+        relative_mask_path = f"projects/{project.code}/datasets/{dataset.code}/annotations/task_{task.id}/{mask_filename}"
+        mask_url = os.path.join(settings.MEDIA_URL, relative_mask_path).replace("\\", "/")
+        
+        metadata_data['meta']['mask_url'] = mask_url
+
+        # ---------------------------------------------------------
+        # 5. Save Metadata (JSON)
+        # ---------------------------------------------------------
         metadata_path = os.path.join(task_dir, 'metadata.json')
         with open(metadata_path, 'w') as f:
             json.dump(metadata_data, f, indent=4)
 
-        # 5. Update Database
+        # 6. Update Database
         task.mask_path = mask_path
-        task.metadata_path = metadata_path  # <--- Save path to DB
+        task.metadata_path = metadata_path
         task.status = 'IN_PROGRESS'
         task.updated_at = timezone.now()
         
@@ -73,15 +96,12 @@ class SaveMaskAPIView(APIView):
 
         return Response({
             "message": "Progress saved successfully",
-            "mask_path": mask_path
+            "mask_path": mask_path,
+            "metadata_path": metadata_path
         })
 
 
 class SubmitTaskAPIView(APIView):
-    """
-    Finalizes the task.
-    Sets status to SUBMITTED, calculates End Time and Duration.
-    """
     permission_classes = [IsAuthenticated]
 
     def post(self, request, task_id):
@@ -91,25 +111,16 @@ class SubmitTaskAPIView(APIView):
             assigned_to=request.user
         )
 
-        # Ensure a mask exists before submitting
         if not task.mask_path:
-            return Response(
-                {"error": "Please save the mask before submitting."},
-                status=400
-            )
+            return Response({"error": "Please save the mask before submitting."}, status=400)
 
-        # 1. Set End Time
         now = timezone.now()
         task.end_time = now
         task.status = 'SUBMITTED'
 
-        # 2. Calculate Duration
         if task.start_time:
             task.total_duration = now - task.start_time
         
-        # 3. Save
         task.save(update_fields=['status', 'end_time', 'total_duration'])
 
-        return Response({
-            "message": "Task submitted successfully",
-        })
+        return Response({"message": "Task submitted successfully"})

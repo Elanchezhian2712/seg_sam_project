@@ -190,6 +190,12 @@ class SegmentationTask(models.Model):
     end_time = models.DateTimeField(null=True, blank=True)
     total_duration = models.DurationField(null=True, blank=True)
 
+    feedback = models.TextField(
+        null=True, 
+        blank=True, 
+        help_text="QA Feedback regarding rejection"
+    )
+
     # Output paths
     mask_path = models.CharField(
         max_length=500,
@@ -393,3 +399,48 @@ class BatchImage(models.Model):
 
     def __str__(self):
         return f"{self.original_filename} ({self.status})"
+
+
+
+
+class TaskReview(models.Model):
+    REVIEW_TYPE_CHOICES = [
+        ('QC', 'Quality Control'),
+        ('QA', 'Quality Assurance'),
+    ]
+
+    DECISION_CHOICES = [
+        ('APPROVED', 'Approved'),
+        ('REJECT_EDIT', 'Reject - Edit Required'),
+        ('REJECT_REDO', 'Reject - Full Redo'),
+    ]
+
+    task = models.ForeignKey(
+        SegmentationTask,
+        on_delete=models.CASCADE,
+        related_name='reviews'
+    )
+
+    reviewer = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT
+    )
+
+    review_type = models.CharField(
+        max_length=5,
+        choices=REVIEW_TYPE_CHOICES
+    )
+
+    decision = models.CharField(
+        max_length=20,
+        choices=DECISION_CHOICES
+    )
+
+    comments = models.TextField(
+        help_text="Mandatory explanation for decision"
+    )
+
+    reviewed_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-reviewed_at']

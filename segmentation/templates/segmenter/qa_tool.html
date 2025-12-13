@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>QA Audit Tool</title>
+    <meta charset="UTF-8" />
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            overflow: hidden;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* QA Toolbar specific styles */
+        .qa-toolbar {
+            background: #e0e0e0;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .status-box {
+            background: #fff;
+            padding: 5px 10px;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+        }
+
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            cursor: pointer;
+            color: white;
+            font-weight: bold;
+            border-radius: 4px;
+            font-size: 14px;
+            margin-left: 10px;
+        }
+
+        .btn-approve {
+            background-color: #28a745;
+        }
+
+        .btn-approve:hover {
+            background-color: #218838;
+        }
+
+        .btn-reject {
+            background-color: #dc3545;
+        }
+
+        .btn-reject:hover {
+            background-color: #c82333;
+        }
+
+        /* Modal for Rejection */
+        #rejectModal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+        }
+
+        .modal-content {
+            background-color: #fefefe;
+            margin: 15% auto;
+            padding: 20px;
+            border: 1px solid #888;
+            width: 400px;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+        }
+
+        textarea {
+            width: 100%;
+            height: 100px;
+            margin: 10px 0;
+            padding: 5px;
+        }
+
+        /* Canvas Styles */
+        #canvasContainer {
+            flex-grow: 1;
+            overflow: auto;
+            border: 2px solid #555;
+            background-color: #333;
+            position: relative;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        #canvasWrapper {
+            position: relative;
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
+        }
+
+        canvas {
+            display: block;
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- QA CONTROL PANEL -->
+    <div class="qa-toolbar">
+        <div>
+            <h3>🧐 QA Audit Mode</h3>
+            <div style="font-size: 0.9em; color: #555;">
+                Task ID: <strong id="taskId">Loading...</strong> |
+                Segmenter: <strong id="segmenterName">Loading...</strong>
+            </div>
+        </div>
+
+        <div>
+            <strong>Mask Visibility:</strong>
+            <input type="range" min="0" max="1" step="0.1" value="0.6" oninput="setMaskOpacity(this.value)">
+
+            &nbsp; | &nbsp;
+            <strong>Zoom:</strong>
+            <button onclick="changeZoom(0.1)">➕</button>
+            <button onclick="changeZoom(-0.1)">➖</button>
+            <button onclick="resetZoom()">Fit</button>
+        </div>
+
+        <div>
+            <button class="btn btn-reject" onclick="openRejectModal()">❌ Reject</button>
+            <button class="btn btn-approve" onclick="submitDecision('approve')">✅ Approve</button>
+        </div>
+    </div>
+
+    <!-- VIEWER -->
+    <div id="canvasContainer">
+        <div id="canvasWrapper">
+            <canvas id="imageCanvas"></canvas>
+            <!-- Mask is loaded here -->
+            <canvas id="maskCanvas" style="position:absolute; left:0; top:0; opacity: 0.6;"></canvas>
+        </div>
+    </div>
+
+    <!-- REJECTION MODAL -->
+    <div id="rejectModal">
+        <div class="modal-content">
+            <h3>Reason for Rejection</h3>
+            <p>Please describe what needs to be fixed:</p>
+            <textarea id="rejectComments" placeholder="e.g., Edges are messy, missed the side mirror..."></textarea>
+            <div style="text-align: right;">
+                <button onclick="closeRejectModal()" style="padding: 8px; cursor:pointer;">Cancel</button>
+                <button class="btn btn-reject" onclick="submitDecision('reject')">Confirm Rejection</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        /* ------------------------------
+           SETUP
+        ------------------------------ */
+        const parts = window.location.pathname.split("/").filter(Boolean);
+        const taskId = parts[parts.length - 1]; // Assumes URL like /qa/task/1/
+
+        const canvasWrapper = document.getElementById("canvasWrapper");
+        const imageCanvas = document.getElementById("imageCanvas");
+        const maskCanvas = document.getElementById("maskCanvas");
+        const imgCtx = imageCanvas.getContext("2d");
+        const maskCtx = maskCanvas.getContext("2d");
+
+        let currentZoom = 1.0;
+        let originalWidth = 0;
+        let originalHeight = 0;
+
+        /* ------------------------------
+           LOAD DATA
+        ------------------------------ */
+        fetch(`/api/segmenter/task/${taskId}/`)
+            .then(res => res.json())
+            .then(task => {
+                document.getElementById("taskId").innerText = task.task_id;
+                document.getElementById("segmenterName").innerText = task.assigned_to || "Unknown";
+
+                const img = new Image();
+                img.src = task.image_path;
+                img.onload = () => {
+                    originalWidth = img.width;
+                    originalHeight = img.height;
+
+                    imageCanvas.width = originalWidth; imageCanvas.height = originalHeight;
+                    maskCanvas.width = originalWidth; maskCanvas.height = originalHeight;
+
+                    imgCtx.drawImage(img, 0, 0);
+
+                    // Load the saved mask (created by the segmenter)
+                    if (task.mask_path) {
+                        const maskImg = new Image();
+                        // Add cache buster to ensure we see latest version
+                        maskImg.src = task.mask_path + "?t=" + new Date().getTime();
+                        maskImg.onload = () => {
+                            maskCtx.drawImage(maskImg, 0, 0);
+                        }
+                    } else {
+                        alert("No mask found for this task!");
+                    }
+                    applyZoom(1.0);
+                };
+            });
+
+        /* ------------------------------
+           DECISION LOGIC
+        ------------------------------ */
+        function openRejectModal() {
+            document.getElementById('rejectModal').style.display = 'block';
+        }
+
+        function closeRejectModal() {
+            document.getElementById('rejectModal').style.display = 'none';
+        }
+
+        function submitDecision(action) {
+            let comments = "";
+
+            if (action === 'reject') {
+                comments = document.getElementById('rejectComments').value;
+                if (!comments) {
+                    alert("Please provide a reason for rejection.");
+                    return;
+                }
+            } else {
+                if (!confirm("Are you sure this mask is perfect?")) return;
+            }
+
+            fetch(`/api/qa/task/${taskId}/decision/`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "X-CSRFToken": getCSRFToken()
+                },
+                body: JSON.stringify({
+                    action: action,
+                    comments: comments
+                })
+            })
+                .then(res => res.json())
+                .then(data => {
+                    alert(data.message);
+                    if (action === 'reject') closeRejectModal();
+                    // Redirect to QA Dashboard
+                    window.location.href = "/qa/dashboard/";
+                })
+                .catch(err => alert("Error: " + err));
+        }
+
+        /* ------------------------------
+           VIEWER UTILS
+        ------------------------------ */
+        function setMaskOpacity(val) {
+            maskCanvas.style.opacity = val;
+        }
+
+        function changeZoom(delta) {
+            const newZoom = Math.max(0.1, Math.min(5.0, currentZoom + delta));
+            applyZoom(newZoom);
+        }
+
+        function resetZoom() { applyZoom(1.0); }
+
+        function applyZoom(zoomLevel) {
+            currentZoom = zoomLevel;
+            const cssWidth = originalWidth * currentZoom;
+            const cssHeight = originalHeight * currentZoom;
+
+            imageCanvas.style.width = cssWidth + "px";
+            imageCanvas.style.height = cssHeight + "px";
+            maskCanvas.style.width = cssWidth + "px";
+            maskCanvas.style.height = cssHeight + "px";
+
+            canvasWrapper.style.width = cssWidth + "px";
+            canvasWrapper.style.height = cssHeight + "px";
+        }
+
+        // Mouse Wheel Zoom
+        document.getElementById("canvasContainer").addEventListener("wheel", function (e) {
+            if (e.ctrlKey) {
+                e.preventDefault();
+                const delta = e.deltaY > 0 ? -0.1 : 0.1;
+                changeZoom(delta);
+            }
+        });
+
+        function getCSRFToken() {
+            return document.cookie.split("; ").find(row => row.startsWith("csrftoken"))?.split("=")[1];
+        }
+    </script>
+</body>
+
+</html>

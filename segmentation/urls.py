@@ -7,8 +7,8 @@ from segmentation.api.segmenter import MyTasksAPIView
 from segmentation.views import my_tasks_view, task_detail_view
 from segmentation.api.segmenter import TaskDetailAPIView
 from segmentation.api.ai import AIPreSegmentationAPIView
-
-
+from segmentation.api.qa import QADecisionAPIView
+from segmentation.views import qa_tool_view 
 
 urlpatterns = [
     # Admin batch upload
@@ -70,4 +70,8 @@ urlpatterns = [
         AIPreSegmentationAPIView.as_view(),
         name="ai-presegment"
     ),
+
+
+    path('api/qa/task/<int:task_id>/decision/', QADecisionAPIView.as_view(), name='qa_decision'),
+    path('qa/task/<int:task_id>/', qa_tool_view, name='qa_tool_page'),
 ]
