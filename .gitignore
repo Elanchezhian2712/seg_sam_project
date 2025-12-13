@@ -1,0 +1,48 @@
+# ========================
+# Python & Virtual Env
+# ========================
+__pycache__/
+*.py[cod]
+*$py.class
+
+# The virtual environment seen in your logs
+seg_eng/
+venv/
+env/
+.venv/
+.env
+
+# ========================
+# Django
+# ========================
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+staticfiles/
+
+# ========================
+# Media & Datasets
+# ========================
+# Ignore user uploads and generated masks (too large for Git)
+media/
+media/projects/
+media/ai_masks/
+
+# ========================
+# Machine Learning Models
+# ========================
+# Ignore large model weights (SAM is >300MB)
+models/*.pth
+*.pt
+*.onnx
+*.pkl
+
+# ========================
+# IDE & OS
+# ========================
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+Desktop.ini

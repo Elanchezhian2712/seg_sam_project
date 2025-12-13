@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>My Segmentation Tasks</title>
+    <meta charset="UTF-8" />
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 40px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th,
+        td {
+            padding: 10px;
+            border: 1px solid #ccc;
+            text-align: left;
+        }
+
+        th {
+            background-color: #f0f0f0;
+        }
+
+        button {
+            padding: 6px 12px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+
+<body>
+
+    <h2>My Segmentation Tasks</h2>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Task ID</th>
+                <th>Image</th>
+                <th>Priority</th>
+                <th>Status</th>
+                <th>Action</th>
+            </tr>
+        </thead>
+        <tbody id="taskTable">
+            <tr>
+                <td colspan="5">Loading tasks...</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <script>
+        const taskTable = document.getElementById("taskTable");
+
+        fetch("/api/segmenter/my-tasks/")
+            .then(res => res.json())
+            .then(tasks => {
+                taskTable.innerHTML = "";
+
+                if (tasks.length === 0) {
+                    taskTable.innerHTML = "<tr><td colspan='5'>No tasks assigned</td></tr>";
+                    return;
+                }
+
+                tasks.forEach(task => {
+                    const row = document.createElement("tr");
+
+                    row.innerHTML = `
+                <td>${task.task_id}</td>
+                <td>${task.image_name}</td>
+                <td>${task.priority}</td>
+                <td>${task.status}</td>
+                <td>
+                    <button onclick="openTask(${task.task_id})">Open</button>
+                </td>
+            `;
+
+                    taskTable.appendChild(row);
+                });
+            })
+            .catch(err => {
+                taskTable.innerHTML = "<tr><td colspan='5'>Error loading tasks</td></tr>";
+            });
+
+        function openTask(taskId) {
+            window.location.href = `/segmenter/task/${taskId}/`;
+        }
+    </script>
+
+</body>
+
+</html>

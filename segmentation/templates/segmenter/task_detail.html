@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Segmentation Task</title>
+    <meta charset="UTF-8" />
+
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+
+        canvas {
+            border: 1px solid #999;
+            display: block;
+        }
+
+        .toolbar button {
+            margin-right: 5px;
+        }
+
+        .toolbar {
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+
+<body>
+
+    <h2>Segmentation Task</h2>
+
+    <div>
+        <strong>Task ID:</strong> <span id="taskId"></span><br>
+        <strong>Image:</strong> <span id="imageName"></span><br>
+        <strong>Status:</strong> <span id="status"></span><br>
+        <strong>Started At:</strong> <span id="startTime"></span>
+    </div>
+
+    <hr>
+
+    <div class="toolbar">
+        <button onclick="setTool('brush')">🖌 Brush (B)</button>
+        <button onclick="setTool('eraser')">🧽 Eraser (E)</button>
+        <button onclick="setTool('pencil')">✏️ Pencil (P)</button>
+        <button onclick="setTool('rect')">⬛ Rectangle (R)</button>
+        <button onclick="setTool('circle')">⚪ Circle (C)</button>
+        <button onclick="setTool('polygon')">🔺 Polygon (G)</button>
+
+        <button onclick="undo()">↩ Undo (Z)</button>
+        <button onclick="redo()">↪ Redo (Y)</button>
+        <button onclick="saveMask()">💾 Save (S)</button>
+
+        Brush size:
+        <input type="range" min="1" max="40" value="10" oninput="brushSize=this.value">
+    </div>
+
+    <div style="position: relative; display: inline-block;">
+        <canvas id="imageCanvas"></canvas>
+        <canvas id="maskCanvas" style="position:absolute; left:0; top:0;"></canvas>
+    </div>
+
+    <script>
+        /* ------------------------------
+           BASIC SETUP
+        ------------------------------ */
+
+        const parts = window.location.pathname.split("/").filter(Boolean);
+        const taskId = parts[parts.length - 1];
+
+        const imageCanvas = document.getElementById("imageCanvas");
+        const maskCanvas = document.getElementById("maskCanvas");
+
+        const imgCtx = imageCanvas.getContext("2d");
+        const maskCtx = maskCanvas.getContext("2d", { willReadFrequently: true });
+
+
+        maskCtx.fillStyle = "rgba(0, 100, 255, 0.5)";
+
+        /* ------------------------------
+           TOOL STATE
+        ------------------------------ */
+
+        const tools = {
+            BRUSH: "brush",
+            ERASER: "eraser",
+            PENCIL: "pencil",
+            RECT: "rect",
+            CIRCLE: "circle",
+            POLYGON: "polygon"
+        };
+
+        let currentTool = tools.BRUSH;
+        let brushSize = 10;
+        let isDrawing = false;
+        let startX = 0, startY = 0;
+        let polygonPoints = [];
+        let polygonPreviewImage = null;
+        let mouseX = 0;
+        let mouseY = 0;
+        const SNAP_DISTANCE = 10; // pixels
+        let isShiftPressed = false;
+
+
+        /* ------------------------------
+           UNDO / REDO STACK
+        ------------------------------ */
+
+        const undoStack = [];
+        const redoStack = [];
+
+        function saveState() {
+            undoStack.push(maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height));
+            if (undoStack.length > 50) undoStack.shift();
+            redoStack.length = 0;
+        }
+
+        function undo() {
+            if (!undoStack.length) return;
+            redoStack.push(maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height));
+            maskCtx.putImageData(undoStack.pop(), 0, 0);
+        }
+
+        function redo() {
+            if (!redoStack.length) return;
+            undoStack.push(maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height));
+            maskCtx.putImageData(redoStack.pop(), 0, 0);
+        }
+
+        /* ------------------------------
+           TOOL HANDLERS
+        ------------------------------ */
+
+        function setTool(tool) {
+            currentTool = tool;
+            polygonPoints = [];
+            polygonPreviewImage = null;
+        }
+
+        maskCanvas.addEventListener("mousedown", e => {
+            const rect = maskCanvas.getBoundingClientRect();
+            startX = e.clientX - rect.left;
+            startY = e.clientY - rect.top;
+
+            if (currentTool === tools.POLYGON) {
+                if (polygonPoints.length === 0) {
+                    saveState();
+                    polygonPreviewImage = maskCtx.getImageData(
+                        0, 0, maskCanvas.width, maskCanvas.height
+                    );
+                }
+
+                let px = startX;
+                let py = startY;
+
+                const first = polygonPoints[0];
+                if (first) {
+                    const dist = Math.hypot(px - first.x, py - first.y);
+                    if (dist < SNAP_DISTANCE && polygonPoints.length >= 3) {
+                        px = first.x;
+                        py = first.y;
+                    }
+                }
+
+                polygonPoints.push({ x: px, y: py });
+                return;
+            }
+
+
+            // ---- Non-polygon tools ----
+            isDrawing = true;
+            saveState();
+        });
+
+
+        maskCanvas.addEventListener("mousemove", e => {
+            const rect = maskCanvas.getBoundingClientRect();
+            mouseX = e.clientX - rect.left;
+            mouseY = e.clientY - rect.top;
+
+            // ---- POLYGON PREVIEW ----
+            if (currentTool === tools.POLYGON && polygonPoints.length > 0) {
+                let px = mouseX;
+                let py = mouseY;
+
+                const last = polygonPoints[polygonPoints.length - 1];
+                const first = polygonPoints[0];
+
+                /* ---------- SHIFT LOCK (H / V) ---------- */
+                if (isShiftPressed) {
+                    const dx = Math.abs(px - last.x);
+                    const dy = Math.abs(py - last.y);
+
+                    if (dx > dy) {
+                        py = last.y; // horizontal
+                    } else {
+                        px = last.x; // vertical
+                    }
+                }
+
+                /* ---------- SNAP TO FIRST POINT ---------- */
+                const distToStart = Math.hypot(px - first.x, py - first.y);
+                if (distToStart < SNAP_DISTANCE && polygonPoints.length >= 3) {
+                    px = first.x;
+                    py = first.y;
+                }
+
+                /* ---------- DRAW PREVIEW ---------- */
+                maskCtx.putImageData(polygonPreviewImage, 0, 0);
+
+                maskCtx.beginPath();
+                maskCtx.moveTo(first.x, first.y);
+                polygonPoints.forEach(p => maskCtx.lineTo(p.x, p.y));
+                maskCtx.lineTo(px, py);
+
+                maskCtx.strokeStyle = "black";
+                maskCtx.lineWidth = 2;
+                maskCtx.stroke();
+
+                /* ---------- SNAP INDICATOR ---------- */
+                if (distToStart < SNAP_DISTANCE && polygonPoints.length >= 3) {
+                    maskCtx.beginPath();
+                    maskCtx.arc(first.x, first.y, 5, 0, Math.PI * 2);
+                    maskCtx.fillStyle = "black";
+                    maskCtx.fill();
+                }
+
+                return;
+            }
+
+
+            // ---- OTHER TOOLS ----
+            if (!isDrawing) return;
+
+            if (currentTool === tools.BRUSH) drawBrush(mouseX, mouseY);
+            if (currentTool === tools.ERASER) erase(mouseX, mouseY);
+            if (currentTool === tools.PENCIL) drawPixel(mouseX, mouseY);
+        });
+
+
+        maskCanvas.addEventListener("mouseup", e => {
+            isDrawing = false;
+
+            const rect = maskCanvas.getBoundingClientRect();
+            const endX = e.clientX - rect.left;
+            const endY = e.clientY - rect.top;
+
+            if (currentTool === tools.RECT) drawRect(startX, startY, endX, endY);
+            if (currentTool === tools.CIRCLE) drawCircle(startX, startY, endX, endY);
+        });
+
+        maskCanvas.addEventListener("dblclick", () => {
+            if (currentTool !== tools.POLYGON) return;
+            if (polygonPoints.length < 3) return;
+
+            maskCtx.putImageData(polygonPreviewImage, 0, 0);
+
+            maskCtx.beginPath();
+            maskCtx.moveTo(polygonPoints[0].x, polygonPoints[0].y);
+            polygonPoints.forEach(p => maskCtx.lineTo(p.x, p.y));
+            maskCtx.closePath();
+            maskCtx.fill();
+
+            polygonPoints = [];
+            polygonPreviewImage = null;
+        });
+
+
+        /* ------------------------------
+           DRAW FUNCTIONS
+        ------------------------------ */
+
+        function drawBrush(x, y) {
+            maskCtx.beginPath();
+            maskCtx.arc(x, y, brushSize, 0, Math.PI * 2);
+            maskCtx.fill();
+        }
+
+        function erase(x, y) {
+            maskCtx.globalCompositeOperation = "destination-out";
+            maskCtx.beginPath();
+            maskCtx.arc(x, y, brushSize, 0, Math.PI * 2);
+            maskCtx.fill();
+            maskCtx.globalCompositeOperation = "source-over";
+        }
+
+        function drawPixel(x, y) {
+            maskCtx.fillRect(x, y, 1, 1);
+        }
+
+        function drawRect(x1, y1, x2, y2) {
+            maskCtx.fillRect(
+                Math.min(x1, x2),
+                Math.min(y1, y2),
+                Math.abs(x2 - x1),
+                Math.abs(y2 - y1)
+            );
+        }
+
+        function drawCircle(x1, y1, x2, y2) {
+            const cx = (x1 + x2) / 2;
+            const cy = (y1 + y2) / 2;
+            const rx = Math.abs(x2 - x1) / 2;
+            const ry = Math.abs(y2 - y1) / 2;
+
+            maskCtx.beginPath();
+            maskCtx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+            maskCtx.fill();
+        }
+
+        /* ------------------------------
+           SAVE MASK
+        ------------------------------ */
+
+        function saveMask() {
+            const dataUrl = maskCanvas.toDataURL("image/png");
+
+            fetch(`/api/segmenter/task/${taskId}/save-mask/`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "X-CSRFToken": getCSRFToken()
+                },
+                body: JSON.stringify({ mask: dataUrl })
+            })
+                .then(res => res.json())
+                .then(() => alert("Mask saved successfully"))
+                .catch(() => alert("Save failed"));
+        }
+
+        function getCSRFToken() {
+            return document.cookie.split("; ")
+                .find(row => row.startsWith("csrftoken"))
+                ?.split("=")[1];
+        }
+
+        /* ------------------------------
+           KEYBOARD SHORTCUTS
+        ------------------------------ */
+
+        document.addEventListener("keydown", e => {
+            if (e.target.tagName === "INPUT") return;
+
+            if (e.key === "b") setTool("brush");
+            if (e.key === "e") setTool("eraser");
+            if (e.key === "p") setTool("pencil");
+            if (e.key === "r") setTool("rect");
+            if (e.key === "c") setTool("circle");
+            if (e.key === "g") setTool("polygon");
+            if (e.key === "z") undo();
+            if (e.key === "y") redo();
+            if (e.key === "s") saveMask();
+        });
+
+        document.addEventListener("keydown", e => {
+            if (e.key === "Shift") isShiftPressed = true;
+        });
+
+        document.addEventListener("keyup", e => {
+            if (e.key === "Shift") isShiftPressed = false;
+        });
+
+        document.addEventListener("keydown", e => {
+
+            // ENTER → close polygon
+            if (e.key === "Enter" && currentTool === tools.POLYGON) {
+                if (polygonPoints.length >= 3) {
+                    maskCtx.putImageData(polygonPreviewImage, 0, 0);
+
+                    maskCtx.beginPath();
+                    maskCtx.moveTo(polygonPoints[0].x, polygonPoints[0].y);
+                    polygonPoints.forEach(p => maskCtx.lineTo(p.x, p.y));
+                    maskCtx.closePath();
+                    maskCtx.fill();
+                }
+
+                polygonPoints = [];
+                polygonPreviewImage = null;
+            }
+
+            // ESC → cancel polygon
+            if (e.key === "Escape" && currentTool === tools.POLYGON) {
+                if (polygonPreviewImage) {
+                    maskCtx.putImageData(polygonPreviewImage, 0, 0);
+                }
+                polygonPoints = [];
+                polygonPreviewImage = null;
+            }
+        });
+
+
+        /* ------------------------------
+           LOAD TASK + AI MASK
+        ------------------------------ */
+
+        // Load task image
+        fetch(`/api/segmenter/task/${taskId}/`)
+            .then(res => res.json())
+            .then(task => {
+                document.getElementById("taskId").innerText = task.task_id;
+                document.getElementById("imageName").innerText = task.image_name;
+                document.getElementById("status").innerText = task.status;
+                document.getElementById("startTime").innerText = task.start_time;
+
+                const img = new Image();
+                img.src = task.image_path;
+                img.onload = () => {
+                    imageCanvas.width = img.width;
+                    imageCanvas.height = img.height;
+                    maskCanvas.width = img.width;
+                    maskCanvas.height = img.height;
+
+                    imgCtx.drawImage(img, 0, 0);
+
+                    // 🔥 Load AI mask AFTER image loads
+                    loadAIMask();
+                };
+            });
+
+        function loadAIMask() {
+            fetch(`/api/ai/presegment/${taskId}/`)
+                .then(res => res.json())
+                .then(data => {
+                    if (!data.mask) return;
+
+                    const maskImg = new Image();
+                    maskImg.src = data.mask;
+                    maskImg.onload = () => {
+                        maskCtx.globalAlpha = 0.5; // translucent overlay
+                        maskCtx.drawImage(maskImg, 0, 0);
+                        maskCtx.globalAlpha = 1.0;
+                    };
+                })
+                .catch(err => console.log("AI pre-segmentation skipped", err));
+        }
+
+    </script>
+
+</body>
+
+</html>

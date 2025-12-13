@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Admin Batch Upload</title>
+    <meta charset="UTF-8" />
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 40px;
+        }
+
+        label {
+            font-weight: bold;
+        }
+
+        select,
+        input,
+        button {
+            width: 300px;
+            padding: 8px;
+            margin: 8px 0;
+        }
+
+        pre {
+            background: #f4f4f4;
+            padding: 15px;
+            border: 1px solid #ccc;
+            max-height: 300px;
+            overflow: auto;
+        }
+    </style>
+</head>
+
+<body>
+
+    <h2>Admin – Batch Image Upload</h2>
+
+    <label>Project</label><br>
+    <select id="projectSelect">
+        <option value="">-- Select Project --</option>
+    </select>
+
+    <br>
+
+    <label>ZIP File</label><br>
+    <input type="file" id="zipFile" accept=".zip" />
+
+    <br>
+
+    <button onclick="uploadBatch()">Upload ZIP</button>
+
+    <h3>Response</h3>
+    <pre id="responseBox">Waiting for upload...</pre>
+
+    <script>
+        const projectSelect = document.getElementById("projectSelect");
+        const responseBox = document.getElementById("responseBox");
+
+        // Load projects
+        fetch("/api/projects/")
+            .then(res => res.json())
+            .then(data => {
+                data.forEach(project => {
+                    const opt = document.createElement("option");
+                    opt.value = project.id;
+                    opt.textContent = project.name;
+                    projectSelect.appendChild(opt);
+                });
+            });
+
+        function uploadBatch() {
+            const projectId = projectSelect.value;
+            const zipFile = document.getElementById("zipFile").files[0];
+
+            if (!projectId || !zipFile) {
+                alert("Please select project and ZIP file");
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append("project_id", projectId);
+            formData.append("zip_file", zipFile);
+
+            responseBox.textContent = "Uploading...";
+
+            fetch("/api/admin/batch-upload/", {
+                method: "POST",
+                body: formData
+            })
+                .then(res => res.json())
+                .then(data => {
+                    responseBox.textContent = JSON.stringify(data, null, 2);
+                })
+                .catch(err => {
+                    responseBox.textContent = "Error: " + err;
+                });
+        }
+    </script>
+
+</body>
+
+</html>
