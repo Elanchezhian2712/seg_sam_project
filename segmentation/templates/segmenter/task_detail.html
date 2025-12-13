@@ -9,269 +9,248 @@
         body {
             font-family: Arial, sans-serif;
             margin: 20px;
+            /* Prevent full page scroll when drawing */
+            overflow: hidden;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Toolbar Styling */
+        .toolbar {
+            margin-bottom: 10px;
+            padding: 10px;
+            background: #f0f0f0;
+            border-radius: 5px;
+            flex-shrink: 0;
+            /* Don't shrink toolbar */
+        }
+
+        .tool-group {
+            display: inline-block;
+            margin-right: 20px;
+            border-right: 1px solid #ccc;
+            padding-right: 20px;
+        }
+
+        /* 
+           CONTAINER FOR ZOOMING 
+           This box stays the same size on screen, but handles scrollbars 
+        */
+        #canvasContainer {
+            flex-grow: 1;
+            /* Fill remaining height */
+            overflow: auto;
+            /* Show scrollbars if zoomed */
+            border: 2px solid #999;
+            background-color: #333;
+            /* Dark background for easier viewing */
+            position: relative;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        /* The wrapper that actually gets resized by CSS */
+        #canvasWrapper {
+            position: relative;
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
         }
 
         canvas {
-            border: 1px solid #999;
             display: block;
-        }
-
-        .toolbar button {
-            margin-right: 5px;
-        }
-
-        .toolbar {
-            margin-bottom: 10px;
+            /* Important: Width/Height controlled by JS for Zoom */
         }
     </style>
 </head>
 
 <body>
 
-    <h2>Segmentation Task</h2>
-
-    <div>
-        <strong>Task ID:</strong> <span id="taskId"></span><br>
-        <strong>Image:</strong> <span id="imageName"></span><br>
-        <strong>Status:</strong> <span id="status"></span><br>
-        <strong>Started At:</strong> <span id="startTime"></span>
-    </div>
-
-    <hr>
-
     <div class="toolbar">
-        <button onclick="setTool('brush')">🖌 Brush (B)</button>
-        <button onclick="setTool('eraser')">🧽 Eraser (E)</button>
-        <button onclick="setTool('pencil')">✏️ Pencil (P)</button>
-        <button onclick="setTool('rect')">⬛ Rectangle (R)</button>
-        <button onclick="setTool('circle')">⚪ Circle (C)</button>
-        <button onclick="setTool('polygon')">🔺 Polygon (G)</button>
+        <!-- TOOLS -->
+        <div class="tool-group">
+            <button onclick="setTool('brush')">🖌 Brush (B)</button>
+            <button onclick="setTool('eraser')">🧽 Eraser (E)</button>
+            <button onclick="setTool('pencil')">✏️ Pencil (P)</button>
+            <button onclick="setTool('rect')">⬛ Rect (R)</button>
+            <button onclick="setTool('circle')">⚪ Circle (C)</button>
+            <button onclick="setTool('polygon')">🔺 Polygon (G)</button>
+        </div>
 
-        <button onclick="undo()">↩ Undo (Z)</button>
-        <button onclick="redo()">↪ Redo (Y)</button>
-        <button onclick="saveMask()">💾 Save (S)</button>
+        <!-- ACTIONS -->
+        <div class="tool-group">
+            <button onclick="undo()">↩ Undo (Z)</button>
+            <button onclick="redo()">↪ Redo (Y)</button>
+            <button onclick="saveMask()">💾 Save (S)</button>
+        </div>
 
-        Brush size:
-        <input type="range" min="1" max="40" value="10" oninput="brushSize=this.value">
+        <!-- ZOOM & OPACITY -->
+        <div class="tool-group">
+            <strong>Zoom:</strong>
+            <button onclick="changeZoom(0.1)">➕</button>
+            <button onclick="changeZoom(-0.1)">➖</button>
+            <button onclick="resetZoom()">Fit</button>
+            <span id="zoomDisplay">100%</span>
+        </div>
 
+        <div>
+            Opacity: <input type="range" min="0.0" max="1.0" step="0.1" value="0.5" oninput="setMaskOpacity(this.value)"
+                style="vertical-align: middle;">
+            &nbsp;|&nbsp;
+            Brush: <input type="range" min="1" max="50" value="10" oninput="brushSize=this.value"
+                style="vertical-align: middle;">
+        </div>
 
+        <div style="margin-top:5px; font-size: 0.85em; color: #666;">
+            Task: <span id="taskId">...</span> | Image: <span id="imageName">...</span>
+        </div>
     </div>
 
-    <div style="position: relative; display: inline-block;">
-        <canvas id="imageCanvas"></canvas>
-        <canvas id="maskCanvas" style="position:absolute; left:0; top:0;"></canvas>
+    <!-- MAIN WORKSPACE -->
+    <div id="canvasContainer">
+        <div id="canvasWrapper">
+            <canvas id="imageCanvas"></canvas>
+            <canvas id="maskCanvas" style="position:absolute; left:0; top:0; opacity: 0.5;"></canvas>
+        </div>
     </div>
 
     <script>
         /* ------------------------------
            BASIC SETUP
         ------------------------------ */
-
         const parts = window.location.pathname.split("/").filter(Boolean);
         const taskId = parts[parts.length - 1];
 
+        const canvasWrapper = document.getElementById("canvasWrapper");
         const imageCanvas = document.getElementById("imageCanvas");
         const maskCanvas = document.getElementById("maskCanvas");
 
         const imgCtx = imageCanvas.getContext("2d");
         const maskCtx = maskCanvas.getContext("2d", { willReadFrequently: true });
 
+        // Set solid color (opacity handled by CSS/Layer)
+        maskCtx.fillStyle = "rgb(0, 100, 255)";
 
-        maskCtx.fillStyle = "rgba(0, 100, 255, 0.5)";
+        // State
+        let currentZoom = 1.0;
+        let originalWidth = 0;
+        let originalHeight = 0;
 
         /* ------------------------------
-           TOOL STATE
+           ZOOM LOGIC
         ------------------------------ */
+        function changeZoom(delta) {
+            const newZoom = Math.max(0.1, Math.min(5.0, currentZoom + delta)); // Limit 10% to 500%
+            applyZoom(newZoom);
+        }
 
-        const tools = {
-            BRUSH: "brush",
-            ERASER: "eraser",
-            PENCIL: "pencil",
-            RECT: "rect",
-            CIRCLE: "circle",
-            POLYGON: "polygon"
-        };
+        function resetZoom() {
+            applyZoom(1.0);
+        }
 
+        function applyZoom(zoomLevel) {
+            currentZoom = zoomLevel;
+            document.getElementById("zoomDisplay").innerText = Math.round(currentZoom * 100) + "%";
+
+            // We calculate the CSS width/height based on the original image dimensions
+            const cssWidth = originalWidth * currentZoom;
+            const cssHeight = originalHeight * currentZoom;
+
+            // Apply visual size to canvases
+            imageCanvas.style.width = cssWidth + "px";
+            imageCanvas.style.height = cssHeight + "px";
+            maskCanvas.style.width = cssWidth + "px";
+            maskCanvas.style.height = cssHeight + "px";
+
+            // Adjust wrapper to match
+            canvasWrapper.style.width = cssWidth + "px";
+            canvasWrapper.style.height = cssHeight + "px";
+        }
+
+        // Mouse Wheel Zoom Support (Ctrl + Scroll)
+        document.getElementById("canvasContainer").addEventListener("wheel", function (e) {
+            if (e.ctrlKey) {
+                e.preventDefault();
+                const delta = e.deltaY > 0 ? -0.1 : 0.1;
+                changeZoom(delta);
+            }
+        });
+
+        /* ------------------------------
+           COORDINATE TRANSLATION (CRITICAL)
+        ------------------------------ */
+        function getMousePos(e) {
+            const rect = maskCanvas.getBoundingClientRect();
+
+            // Calculate scale ratio (Internal Resolution / Visual Size)
+            const scaleX = maskCanvas.width / rect.width;
+            const scaleY = maskCanvas.height / rect.height;
+
+            return {
+                x: (e.clientX - rect.left) * scaleX,
+                y: (e.clientY - rect.top) * scaleY
+            };
+        }
+
+        /* ------------------------------
+           TOOL STATE & HANDLERS
+        ------------------------------ */
+        const tools = { BRUSH: "brush", ERASER: "eraser", PENCIL: "pencil", RECT: "rect", CIRCLE: "circle", POLYGON: "polygon" };
         let currentTool = tools.BRUSH;
         let brushSize = 10;
         let isDrawing = false;
         let startX = 0, startY = 0;
         let polygonPoints = [];
         let polygonPreviewImage = null;
-        let mouseX = 0;
-        let mouseY = 0;
-        const SNAP_DISTANCE = 10; // pixels
         let isShiftPressed = false;
-
-
-        /* ------------------------------
-           UNDO / REDO STACK
-        ------------------------------ */
-
-        const undoStack = [];
-        const redoStack = [];
-
-        function saveState() {
-            undoStack.push(maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height));
-            if (undoStack.length > 50) undoStack.shift();
-            redoStack.length = 0;
-        }
-
-        function undo() {
-            if (!undoStack.length) return;
-            redoStack.push(maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height));
-            maskCtx.putImageData(undoStack.pop(), 0, 0);
-        }
-
-        function redo() {
-            if (!redoStack.length) return;
-            undoStack.push(maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height));
-            maskCtx.putImageData(redoStack.pop(), 0, 0);
-        }
+        const SNAP_DISTANCE = 10;
 
         /* ------------------------------
-           TOOL HANDLERS
+           MOUSE EVENTS
         ------------------------------ */
-
-        function setTool(tool) {
-            currentTool = tool;
-            polygonPoints = [];
-            polygonPreviewImage = null;
-        }
-
         maskCanvas.addEventListener("mousedown", e => {
-            const rect = maskCanvas.getBoundingClientRect();
-            startX = e.clientX - rect.left;
-            startY = e.clientY - rect.top;
+            const pos = getMousePos(e);
+            startX = pos.x;
+            startY = pos.y;
 
             if (currentTool === tools.POLYGON) {
-                if (polygonPoints.length === 0) {
-                    saveState();
-                    polygonPreviewImage = maskCtx.getImageData(
-                        0, 0, maskCanvas.width, maskCanvas.height
-                    );
-                }
-
-                let px = startX;
-                let py = startY;
-
-                const first = polygonPoints[0];
-                if (first) {
-                    const dist = Math.hypot(px - first.x, py - first.y);
-                    if (dist < SNAP_DISTANCE && polygonPoints.length >= 3) {
-                        px = first.x;
-                        py = first.y;
-                    }
-                }
-
-                polygonPoints.push({ x: px, y: py });
+                handlePolygonClick(startX, startY);
                 return;
             }
-
-
-            // ---- Non-polygon tools ----
             isDrawing = true;
             saveState();
         });
 
-
         maskCanvas.addEventListener("mousemove", e => {
-            const rect = maskCanvas.getBoundingClientRect();
-            mouseX = e.clientX - rect.left;
-            mouseY = e.clientY - rect.top;
+            const pos = getMousePos(e);
+            const mouseX = pos.x;
+            const mouseY = pos.y;
 
-            // ---- POLYGON PREVIEW ----
+            // Polygon Preview
             if (currentTool === tools.POLYGON && polygonPoints.length > 0) {
-                let px = mouseX;
-                let py = mouseY;
-
-                const last = polygonPoints[polygonPoints.length - 1];
-                const first = polygonPoints[0];
-
-                /* ---------- SHIFT LOCK (H / V) ---------- */
-                if (isShiftPressed) {
-                    const dx = Math.abs(px - last.x);
-                    const dy = Math.abs(py - last.y);
-
-                    if (dx > dy) {
-                        py = last.y; // horizontal
-                    } else {
-                        px = last.x; // vertical
-                    }
-                }
-
-                /* ---------- SNAP TO FIRST POINT ---------- */
-                const distToStart = Math.hypot(px - first.x, py - first.y);
-                if (distToStart < SNAP_DISTANCE && polygonPoints.length >= 3) {
-                    px = first.x;
-                    py = first.y;
-                }
-
-                /* ---------- DRAW PREVIEW ---------- */
-                maskCtx.putImageData(polygonPreviewImage, 0, 0);
-
-                maskCtx.beginPath();
-                maskCtx.moveTo(first.x, first.y);
-                polygonPoints.forEach(p => maskCtx.lineTo(p.x, p.y));
-                maskCtx.lineTo(px, py);
-
-                maskCtx.strokeStyle = "black";
-                maskCtx.lineWidth = 2;
-                maskCtx.stroke();
-
-                /* ---------- SNAP INDICATOR ---------- */
-                if (distToStart < SNAP_DISTANCE && polygonPoints.length >= 3) {
-                    maskCtx.beginPath();
-                    maskCtx.arc(first.x, first.y, 5, 0, Math.PI * 2);
-                    maskCtx.fillStyle = "black";
-                    maskCtx.fill();
-                }
-
+                drawPolygonPreview(mouseX, mouseY);
                 return;
             }
 
-
-            // ---- OTHER TOOLS ----
             if (!isDrawing) return;
 
+            // Drawing Tools
             if (currentTool === tools.BRUSH) drawBrush(mouseX, mouseY);
-            if (currentTool === tools.ERASER) erase(mouseX, mouseY);
-            if (currentTool === tools.PENCIL) drawPixel(mouseX, mouseY);
+            else if (currentTool === tools.ERASER) erase(mouseX, mouseY);
+            else if (currentTool === tools.PENCIL) drawPixel(mouseX, mouseY);
         });
-
 
         maskCanvas.addEventListener("mouseup", e => {
             isDrawing = false;
+            const pos = getMousePos(e);
 
-            const rect = maskCanvas.getBoundingClientRect();
-            const endX = e.clientX - rect.left;
-            const endY = e.clientY - rect.top;
-
-            if (currentTool === tools.RECT) drawRect(startX, startY, endX, endY);
-            if (currentTool === tools.CIRCLE) drawCircle(startX, startY, endX, endY);
+            if (currentTool === tools.RECT) drawRect(startX, startY, pos.x, pos.y);
+            if (currentTool === tools.CIRCLE) drawCircle(startX, startY, pos.x, pos.y);
         });
-
-        maskCanvas.addEventListener("dblclick", () => {
-            if (currentTool !== tools.POLYGON) return;
-            if (polygonPoints.length < 3) return;
-
-            maskCtx.putImageData(polygonPreviewImage, 0, 0);
-
-            maskCtx.beginPath();
-            maskCtx.moveTo(polygonPoints[0].x, polygonPoints[0].y);
-            polygonPoints.forEach(p => maskCtx.lineTo(p.x, p.y));
-            maskCtx.closePath();
-            maskCtx.fill();
-
-            polygonPoints = [];
-            polygonPreviewImage = null;
-        });
-
 
         /* ------------------------------
-           DRAW FUNCTIONS
+           DRAWING FUNCTIONS
         ------------------------------ */
-
         function drawBrush(x, y) {
             maskCtx.beginPath();
             maskCtx.arc(x, y, brushSize, 0, Math.PI * 2);
@@ -287,16 +266,11 @@
         }
 
         function drawPixel(x, y) {
-            maskCtx.fillRect(x, y, 1, 1);
+            maskCtx.fillRect(Math.floor(x), Math.floor(y), 1, 1);
         }
 
         function drawRect(x1, y1, x2, y2) {
-            maskCtx.fillRect(
-                Math.min(x1, x2),
-                Math.min(y1, y2),
-                Math.abs(x2 - x1),
-                Math.abs(y2 - y1)
-            );
+            maskCtx.fillRect(Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1));
         }
 
         function drawCircle(x1, y1, x2, y2) {
@@ -304,117 +278,163 @@
             const cy = (y1 + y2) / 2;
             const rx = Math.abs(x2 - x1) / 2;
             const ry = Math.abs(y2 - y1) / 2;
-
             maskCtx.beginPath();
             maskCtx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
             maskCtx.fill();
         }
 
         /* ------------------------------
-           SAVE MASK
+           POLYGON LOGIC
         ------------------------------ */
+        function handlePolygonClick(px, py) {
+            if (polygonPoints.length === 0) {
+                saveState();
+                polygonPreviewImage = maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height);
+            }
+
+            // Snap logic
+            if (polygonPoints.length > 0) {
+                const first = polygonPoints[0];
+                if (Math.hypot(px - first.x, py - first.y) < SNAP_DISTANCE && polygonPoints.length >= 3) {
+                    px = first.x; py = first.y; // Snap to start
+                }
+            }
+            polygonPoints.push({ x: px, y: py });
+        }
+
+        function drawPolygonPreview(currX, currY) {
+            // Restore clean state
+            maskCtx.putImageData(polygonPreviewImage, 0, 0);
+
+            const first = polygonPoints[0];
+            const last = polygonPoints[polygonPoints.length - 1];
+
+            // Shift Lock (Straight lines)
+            if (isShiftPressed) {
+                if (Math.abs(currX - last.x) > Math.abs(currY - last.y)) currY = last.y;
+                else currX = last.x;
+            }
+
+            // Draw current path
+            maskCtx.beginPath();
+            maskCtx.moveTo(first.x, first.y);
+            polygonPoints.forEach(p => maskCtx.lineTo(p.x, p.y));
+            maskCtx.lineTo(currX, currY);
+
+            // Style for preview
+            maskCtx.lineWidth = 2;
+            maskCtx.strokeStyle = "rgba(0,0,0,0.8)"; // Black line for visibility
+            maskCtx.stroke();
+
+            // Draw lines again in white for contrast (optional)
+            maskCtx.strokeStyle = "white";
+            maskCtx.lineWidth = 1;
+            maskCtx.stroke();
+
+            // Reset
+            maskCtx.lineWidth = 1;
+            maskCtx.fillStyle = "rgb(0, 100, 255)"; // Reset fill color
+        }
+
+        // Close polygon on Double Click or Enter
+        maskCanvas.addEventListener("dblclick", () => finishPolygon());
+
+        function finishPolygon() {
+            if (polygonPoints.length < 3) return;
+            maskCtx.putImageData(polygonPreviewImage, 0, 0); // Clear preview lines
+            maskCtx.beginPath();
+            maskCtx.moveTo(polygonPoints[0].x, polygonPoints[0].y);
+            polygonPoints.forEach(p => maskCtx.lineTo(p.x, p.y));
+            maskCtx.closePath();
+            maskCtx.fill(); // Fill with the solid blue
+            polygonPoints = [];
+            polygonPreviewImage = null;
+        }
+
+        /* ------------------------------
+           UNDO / REDO / SAVE
+        ------------------------------ */
+        const undoStack = [];
+        const redoStack = [];
+
+        function saveState() {
+            undoStack.push(maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height));
+            if (undoStack.length > 30) undoStack.shift();
+            redoStack.length = 0;
+        }
+
+        function undo() {
+            if (!undoStack.length) return;
+            redoStack.push(maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height));
+            maskCtx.putImageData(undoStack.pop(), 0, 0);
+        }
+
+        function redo() {
+            if (!redoStack.length) return;
+            undoStack.push(maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height));
+            maskCtx.putImageData(redoStack.pop(), 0, 0);
+        }
 
         function saveMask() {
             const dataUrl = maskCanvas.toDataURL("image/png");
-
             fetch(`/api/segmenter/task/${taskId}/save-mask/`, {
                 method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    "X-CSRFToken": getCSRFToken()
-                },
+                headers: { "Content-Type": "application/json", "X-CSRFToken": getCSRFToken() },
                 body: JSON.stringify({ mask: dataUrl })
-            })
-                .then(res => res.json())
-                .then(() => alert("Mask saved successfully"))
-                .catch(() => alert("Save failed"));
+            }).then(() => alert("Saved!")).catch(() => alert("Failed!"));
         }
 
         function getCSRFToken() {
-            return document.cookie.split("; ")
-                .find(row => row.startsWith("csrftoken"))
-                ?.split("=")[1];
+            return document.cookie.split("; ").find(row => row.startsWith("csrftoken"))?.split("=")[1];
         }
 
         /* ------------------------------
-           KEYBOARD SHORTCUTS
+           UTILITIES
         ------------------------------ */
+        function setTool(t) { currentTool = t; polygonPoints = []; }
+        function setMaskOpacity(val) { maskCanvas.style.opacity = val; }
 
         document.addEventListener("keydown", e => {
             if (e.target.tagName === "INPUT") return;
-
-            if (e.key === "b") setTool("brush");
-            if (e.key === "e") setTool("eraser");
-            if (e.key === "p") setTool("pencil");
-            if (e.key === "r") setTool("rect");
-            if (e.key === "c") setTool("circle");
-            if (e.key === "g") setTool("polygon");
+            if (e.key === "b") setTool(tools.BRUSH);
+            if (e.key === "e") setTool(tools.ERASER);
             if (e.key === "z") undo();
-            if (e.key === "y") redo();
-            if (e.key === "s") saveMask();
-        });
-
-        document.addEventListener("keydown", e => {
             if (e.key === "Shift") isShiftPressed = true;
-        });
-
-        document.addEventListener("keyup", e => {
-            if (e.key === "Shift") isShiftPressed = false;
-        });
-
-        document.addEventListener("keydown", e => {
-
-            // ENTER → close polygon
-            if (e.key === "Enter" && currentTool === tools.POLYGON) {
-                if (polygonPoints.length >= 3) {
-                    maskCtx.putImageData(polygonPreviewImage, 0, 0);
-
-                    maskCtx.beginPath();
-                    maskCtx.moveTo(polygonPoints[0].x, polygonPoints[0].y);
-                    polygonPoints.forEach(p => maskCtx.lineTo(p.x, p.y));
-                    maskCtx.closePath();
-                    maskCtx.fill();
-                }
-
-                polygonPoints = [];
-                polygonPreviewImage = null;
-            }
-
-            // ESC → cancel polygon
+            if (e.key === "Enter" && currentTool === tools.POLYGON) finishPolygon();
             if (e.key === "Escape" && currentTool === tools.POLYGON) {
-                if (polygonPreviewImage) {
-                    maskCtx.putImageData(polygonPreviewImage, 0, 0);
-                }
+                maskCtx.putImageData(polygonPreviewImage, 0, 0);
                 polygonPoints = [];
-                polygonPreviewImage = null;
             }
         });
+        document.addEventListener("keyup", e => { if (e.key === "Shift") isShiftPressed = false; });
 
 
         /* ------------------------------
-           LOAD TASK + AI MASK
+           INIT
         ------------------------------ */
-
-        // Load task image
         fetch(`/api/segmenter/task/${taskId}/`)
             .then(res => res.json())
             .then(task => {
                 document.getElementById("taskId").innerText = task.task_id;
                 document.getElementById("imageName").innerText = task.image_name;
-                document.getElementById("status").innerText = task.status;
-                document.getElementById("startTime").innerText = task.start_time;
 
                 const img = new Image();
                 img.src = task.image_path;
                 img.onload = () => {
-                    imageCanvas.width = img.width;
-                    imageCanvas.height = img.height;
-                    maskCanvas.width = img.width;
-                    maskCanvas.height = img.height;
+                    // Set Internal Resolution
+                    originalWidth = img.width;
+                    originalHeight = img.height;
 
+                    imageCanvas.width = originalWidth;
+                    imageCanvas.height = originalHeight;
+                    maskCanvas.width = originalWidth;
+                    maskCanvas.height = originalHeight;
+
+                    // Draw image
                     imgCtx.drawImage(img, 0, 0);
 
-                    // 🔥 Load AI mask AFTER image loads
+                    // Initialize View
+                    applyZoom(1.0);
                     loadAIMask();
                 };
             });
@@ -424,20 +444,12 @@
                 .then(res => res.json())
                 .then(data => {
                     if (!data.mask) return;
-
-                    const maskImg = new Image();
-                    maskImg.src = data.mask;
-                    maskImg.onload = () => {
-                        maskCtx.globalAlpha = 0.5; // translucent overlay
-                        maskCtx.drawImage(maskImg, 0, 0);
-                        maskCtx.globalAlpha = 1.0;
-                    };
-                })
-                .catch(err => console.log("AI pre-segmentation skipped", err));
+                    const m = new Image();
+                    m.src = data.mask;
+                    m.onload = () => maskCtx.drawImage(m, 0, 0);
+                });
         }
-
     </script>
-
 </body>
 
 </html>
