@@ -402,7 +402,6 @@ class BatchImage(models.Model):
 
 
 
-
 class TaskReview(models.Model):
     REVIEW_TYPE_CHOICES = [
         ('QC', 'Quality Control'),
@@ -416,7 +415,7 @@ class TaskReview(models.Model):
     ]
 
     task = models.ForeignKey(
-        SegmentationTask,
+        'segmentation.SegmentationTask', # String reference to avoid circular imports
         on_delete=models.CASCADE,
         related_name='reviews'
     )
@@ -428,7 +427,8 @@ class TaskReview(models.Model):
 
     review_type = models.CharField(
         max_length=5,
-        choices=REVIEW_TYPE_CHOICES
+        choices=REVIEW_TYPE_CHOICES,
+        default='QA'
     )
 
     decision = models.CharField(
@@ -437,10 +437,20 @@ class TaskReview(models.Model):
     )
 
     comments = models.TextField(
-        help_text="Mandatory explanation for decision"
+        help_text="Mandatory explanation for decision",
+        null=True, 
+        blank=True
     )
 
+    # Tracks when the decision was made
     reviewed_at = models.DateTimeField(auto_now_add=True)
+
+    start_time = models.DateTimeField(null=True, blank=True, help_text="When QA started")
+    end_time = models.DateTimeField(null=True, blank=True, help_text="When QA finished")
+    duration = models.DurationField(null=True, blank=True, help_text="Time taken for review")
 
     class Meta:
         ordering = ['-reviewed_at']
+
+    def __str__(self):
+        return f"{self.task.id} - {self.decision} by {self.reviewer}"

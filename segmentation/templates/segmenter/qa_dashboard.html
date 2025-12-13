@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>QA Dashboard</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 40px;
+            background-color: #f4f4f9;
+        }
+
+        h2 {
+            color: #333;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background: white;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        th,
+        td {
+            padding: 12px 15px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+
+        th {
+            background-color: #007bff;
+            color: white;
+            text-transform: uppercase;
+            font-size: 0.85em;
+        }
+
+        tr:hover {
+            background-color: #f1f1f1;
+        }
+
+        /* Status Badges */
+        .status-badge {
+            padding: 5px 10px;
+            border-radius: 12px;
+            font-size: 0.8em;
+            font-weight: bold;
+        }
+
+        .status-SUBMITTED {
+            background-color: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeeba;
+        }
+
+        /* Priority Badges */
+        .priority-HIGH {
+            color: red;
+            font-weight: bold;
+        }
+
+        .priority-MEDIUM {
+            color: orange;
+            font-weight: bold;
+        }
+
+        .priority-LOW {
+            color: green;
+        }
+
+        /* Action Button */
+        .btn-audit {
+            text-decoration: none;
+            background-color: #28a745;
+            color: white;
+            padding: 8px 15px;
+            border-radius: 4px;
+            font-size: 0.9em;
+            display: inline-block;
+        }
+
+        .btn-audit:hover {
+            background-color: #218838;
+        }
+
+        .thumbnail {
+            width: 50px;
+            height: 50px;
+            object-fit: cover;
+            border-radius: 4px;
+            vertical-align: middle;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+        <h2>🧐 QA Audit Dashboard</h2>
+        <div>
+            <a href="/segmenter/my-tasks/" style="text-decoration:none; color:#666;">Go to Segmenter View</a>
+        </div>
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Task ID</th>
+                <th>Image</th>
+                <th>Segmenter</th>
+                <th>Priority</th>
+                <th>Status</th>
+                <th>Action</th>
+            </tr>
+        </thead>
+        <tbody id="taskTableBody">
+            <!-- Rows will be inserted here by JS -->
+        </tbody>
+    </table>
+
+    <div id="loading" style="text-align:center; padding:20px; color:#666;">Loading tasks...</div>
+    <div id="noTasks" style="display:none; text-align:center; padding:20px; color:#666;">
+        No tasks pending for QA. Good job! 🎉
+    </div>
+
+    <script>
+        // Fetch tasks from API
+        fetch('/api/qa/dashboard/')
+            .then(response => response.json())
+            .then(data => {
+                const tableBody = document.getElementById('taskTableBody');
+                const loading = document.getElementById('loading');
+                const noTasks = document.getElementById('noTasks');
+
+                loading.style.display = 'none';
+
+                if (data.length === 0) {
+                    noTasks.style.display = 'block';
+                    return;
+                }
+
+                data.forEach(task => {
+                    const row = document.createElement('tr');
+
+                    row.innerHTML = `
+                        <td>#${task.task_id}</td>
+                        <td>
+                            <img src="${task.image_path}" class="thumbnail">
+                            <span style="margin-left:10px;">${task.image_name}</span>
+                        </td>
+                        <td>${task.assigned_to}</td>
+                        <td class="priority-${task.priority}">${task.priority}</td>
+                        <td><span class="status-badge status-${task.status}">${task.status}</span></td>
+                        <td>
+                            <a href="/qa/task/${task.task_id}/" class="btn-audit">🔍 Audit</a>
+                        </td>
+                    `;
+                    tableBody.appendChild(row);
+                });
+            })
+            .catch(error => {
+                document.getElementById('loading').innerText = "Error loading tasks.";
+                console.error('Error:', error);
+            });
+    </script>
+
+</body>
+
+</html>

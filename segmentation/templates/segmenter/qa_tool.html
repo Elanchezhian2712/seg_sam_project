@@ -14,37 +14,45 @@
             flex-direction: column;
         }
 
-        /* QA Toolbar specific styles */
-        .qa-toolbar {
-            background: #e0e0e0;
-            padding: 15px;
-            border-radius: 5px;
+        /* Toolbar Styling */
+        .toolbar {
             margin-bottom: 10px;
+            padding: 10px;
+            background: #f0f0f0;
+            border-radius: 5px;
+            flex-shrink: 0;
             display: flex;
             justify-content: space-between;
             align-items: center;
+            border-bottom: 2px solid #ccc;
         }
 
-        .status-box {
-            background: #fff;
-            padding: 5px 10px;
-            border-radius: 4px;
-            border: 1px solid #ccc;
+        .tool-group {
+            display: inline-block;
+            margin-right: 20px;
+            border-right: 1px solid #ccc;
+            padding-right: 20px;
         }
 
-        .btn {
-            padding: 10px 20px;
-            border: none;
+        button {
             cursor: pointer;
-            color: white;
-            font-weight: bold;
-            border-radius: 4px;
-            font-size: 14px;
-            margin-left: 10px;
+            padding: 6px 12px;
+            margin-right: 4px;
+            border: 1px solid #999;
+            border-radius: 3px;
+            background: #fff;
+        }
+
+        button:hover {
+            background: #e0e0e0;
         }
 
         .btn-approve {
             background-color: #28a745;
+            color: white;
+            border: none;
+            font-weight: bold;
+            padding: 10px 20px;
         }
 
         .btn-approve:hover {
@@ -53,13 +61,48 @@
 
         .btn-reject {
             background-color: #dc3545;
+            color: white;
+            border: none;
+            font-weight: bold;
+            padding: 10px 20px;
         }
 
         .btn-reject:hover {
             background-color: #c82333;
         }
 
-        /* Modal for Rejection */
+        .btn-save {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            font-weight: bold;
+        }
+
+        .btn-save:hover {
+            background-color: #0069d9;
+        }
+
+        #canvasContainer {
+            flex-grow: 1;
+            overflow: auto;
+            border: 2px solid #999;
+            background-color: #333;
+            position: relative;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        #canvasWrapper {
+            position: relative;
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
+        }
+
+        canvas {
+            display: block;
+        }
+
         #rejectModal {
             display: none;
             position: fixed;
@@ -78,227 +121,344 @@
             border: 1px solid #888;
             width: 400px;
             border-radius: 8px;
-            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
         }
 
         textarea {
             width: 100%;
-            height: 100px;
+            height: 80px;
             margin: 10px 0;
             padding: 5px;
-        }
-
-        /* Canvas Styles */
-        #canvasContainer {
-            flex-grow: 1;
-            overflow: auto;
-            border: 2px solid #555;
-            background-color: #333;
-            position: relative;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-        }
-
-        #canvasWrapper {
-            position: relative;
-            box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
-        }
-
-        canvas {
-            display: block;
         }
     </style>
 </head>
 
 <body>
 
-    <!-- QA CONTROL PANEL -->
-    <div class="qa-toolbar">
-        <div>
-            <h3>🧐 QA Audit Mode</h3>
-            <div style="font-size: 0.9em; color: #555;">
-                Task ID: <strong id="taskId">Loading...</strong> |
-                Segmenter: <strong id="segmenterName">Loading...</strong>
-            </div>
+    <div class="toolbar">
+        <div class="tool-group">
+            <button onclick="setTool('brush')">🖌 Brush (B)</button>
+            <button onclick="setTool('eraser')">🧽 Eraser (E)</button>
+            <button onclick="setTool('pencil')">✏️ Pencil (P)</button>
+            <button onclick="setTool('rect')">⬛ Rect (R)</button>
+            <button onclick="setTool('circle')">⚪ Circle (C)</button>
+            <button onclick="setTool('polygon')">🔺 Polygon (G)</button>
         </div>
 
-        <div>
-            <strong>Mask Visibility:</strong>
-            <input type="range" min="0" max="1" step="0.1" value="0.6" oninput="setMaskOpacity(this.value)">
-
-            &nbsp; | &nbsp;
-            <strong>Zoom:</strong>
+        <div class="tool-group">
+            <button onclick="undo()">↩ Undo (Z)</button>
+            <button onclick="redo()">↪ Redo (Y)</button>
             <button onclick="changeZoom(0.1)">➕</button>
             <button onclick="changeZoom(-0.1)">➖</button>
             <button onclick="resetZoom()">Fit</button>
+            <input type="range" min="0" max="1" step="0.1" value="0.6" oninput="setMaskOpacity(this.value)"
+                style="vertical-align:middle; width:60px" title="Opacity">
+            <input type="range" min="1" max="50" value="10" oninput="brushSize=this.value"
+                style="vertical-align:middle; width:60px" title="Brush Size">
         </div>
 
         <div>
-            <button class="btn btn-reject" onclick="openRejectModal()">❌ Reject</button>
-            <button class="btn btn-approve" onclick="submitDecision('approve')">✅ Approve</button>
+            <button class="btn-save" onclick="saveDraft()">💾 Save Draft (S)</button>
+            <button class="btn-reject" onclick="openRejectModal()">❌ Reject</button>
+            <button class="btn-approve" onclick="submitDecision('approve')">✅ Approve</button>
         </div>
     </div>
 
-    <!-- VIEWER -->
     <div id="canvasContainer">
         <div id="canvasWrapper">
             <canvas id="imageCanvas"></canvas>
-            <!-- Mask is loaded here -->
             <canvas id="maskCanvas" style="position:absolute; left:0; top:0; opacity: 0.6;"></canvas>
         </div>
     </div>
 
-    <!-- REJECTION MODAL -->
     <div id="rejectModal">
         <div class="modal-content">
-            <h3>Reason for Rejection</h3>
-            <p>Please describe what needs to be fixed:</p>
-            <textarea id="rejectComments" placeholder="e.g., Edges are messy, missed the side mirror..."></textarea>
+            <h3>Reject Task</h3>
+            <p>Reason:</p>
+            <textarea id="rejectComments"></textarea>
             <div style="text-align: right;">
-                <button onclick="closeRejectModal()" style="padding: 8px; cursor:pointer;">Cancel</button>
-                <button class="btn btn-reject" onclick="submitDecision('reject')">Confirm Rejection</button>
+                <button onclick="closeRejectModal()" style="padding: 8px;">Cancel</button>
+                <button class="btn-reject" onclick="submitDecision('reject')">Confirm Reject</button>
             </div>
         </div>
     </div>
 
     <script>
-        /* ------------------------------
-           SETUP
-        ------------------------------ */
+        // --- 1. SETUP ---
         const parts = window.location.pathname.split("/").filter(Boolean);
-        const taskId = parts[parts.length - 1]; // Assumes URL like /qa/task/1/
+        const taskId = parts[parts.length - 1];
+        const qaStartTime = new Date().toISOString();
 
         const canvasWrapper = document.getElementById("canvasWrapper");
         const imageCanvas = document.getElementById("imageCanvas");
         const maskCanvas = document.getElementById("maskCanvas");
         const imgCtx = imageCanvas.getContext("2d");
-        const maskCtx = maskCanvas.getContext("2d");
+        const maskCtx = maskCanvas.getContext("2d", { willReadFrequently: true });
 
+        // QA Color (Greenish to show edits)
+        maskCtx.fillStyle = "rgb(0, 200, 0)";
+        maskCtx.strokeStyle = "rgb(0, 200, 0)";
+
+        let storedShapes = [];
+        let currentPath = [];
         let currentZoom = 1.0;
-        let originalWidth = 0;
-        let originalHeight = 0;
+        let originalWidth = 0, originalHeight = 0;
 
-        /* ------------------------------
-           LOAD DATA
-        ------------------------------ */
+        const tools = { BRUSH: "brush", ERASER: "eraser", PENCIL: "pencil", RECT: "rect", CIRCLE: "circle", POLYGON: "polygon" };
+        let currentTool = tools.BRUSH;
+        let brushSize = 10;
+        let isDrawing = false;
+        let startX = 0, startY = 0;
+        let polygonPoints = [];
+        let polygonPreviewImage = null;
+        let isShiftPressed = false;
+        const SNAP_DISTANCE = 10;
+        const undoStack = [];
+        const redoStack = [];
+
+        // --- 2. LOAD DATA ---
         fetch(`/api/segmenter/task/${taskId}/`)
             .then(res => res.json())
             .then(task => {
-                document.getElementById("taskId").innerText = task.task_id;
-                document.getElementById("segmenterName").innerText = task.assigned_to || "Unknown";
-
                 const img = new Image();
                 img.src = task.image_path;
                 img.onload = () => {
-                    originalWidth = img.width;
-                    originalHeight = img.height;
-
-                    imageCanvas.width = originalWidth; imageCanvas.height = originalHeight;
-                    maskCanvas.width = originalWidth; maskCanvas.height = originalHeight;
-
+                    originalWidth = img.width; originalHeight = img.height;
+                    imageCanvas.width = maskCanvas.width = originalWidth;
+                    imageCanvas.height = maskCanvas.height = originalHeight;
                     imgCtx.drawImage(img, 0, 0);
-
-                    // Load the saved mask (created by the segmenter)
-                    if (task.mask_path) {
-                        const maskImg = new Image();
-                        // Add cache buster to ensure we see latest version
-                        maskImg.src = task.mask_path + "?t=" + new Date().getTime();
-                        maskImg.onload = () => {
-                            maskCtx.drawImage(maskImg, 0, 0);
-                        }
-                    } else {
-                        alert("No mask found for this task!");
-                    }
                     applyZoom(1.0);
+
+                    // A. LOAD EXISTING MASK IMAGE
+                    if (task.mask_path) {
+                        const m = new Image();
+                        m.src = task.mask_path + "?t=" + new Date().getTime();
+                        m.crossOrigin = "Anonymous";
+                        m.onload = () => {
+                            maskCtx.drawImage(m, 0, 0);
+                            saveState();
+                        };
+                    } else {
+                        saveState();
+                    }
+
+                    // B. LOAD EXISTING SHAPES (Fix for Data Loss)
+                    if (task.metadata && task.metadata.shapes) {
+                        storedShapes = task.metadata.shapes;
+                        console.log("Loaded existing shapes:", storedShapes.length);
+                    }
                 };
             });
 
-        /* ------------------------------
-           DECISION LOGIC
-        ------------------------------ */
-        function openRejectModal() {
-            document.getElementById('rejectModal').style.display = 'block';
-        }
-
-        function closeRejectModal() {
-            document.getElementById('rejectModal').style.display = 'none';
-        }
+        // --- 3. QA ACTIONS ---
+        function saveDraft() { submitDecision('save'); }
+        function openRejectModal() { document.getElementById('rejectModal').style.display = 'block'; }
+        function closeRejectModal() { document.getElementById('rejectModal').style.display = 'none'; }
 
         function submitDecision(action) {
             let comments = "";
-
             if (action === 'reject') {
                 comments = document.getElementById('rejectComments').value;
-                if (!comments) {
-                    alert("Please provide a reason for rejection.");
-                    return;
-                }
-            } else {
-                if (!confirm("Are you sure this mask is perfect?")) return;
+                if (!comments) return alert("Comment required");
+            } else if (action === 'approve') {
+                if (!confirm("Approve task?")) return;
             }
+
+            const oldOpacity = maskCanvas.style.opacity;
+            maskCanvas.style.opacity = "1.0";
+            const dataUrl = maskCanvas.toDataURL("image/png");
+            maskCanvas.style.opacity = oldOpacity;
+
+            const metadata = {
+                meta: {
+                    original_width: originalWidth,
+                    timestamp: new Date().toISOString(),
+                    qa_action: action
+                },
+                shapes: storedShapes
+            };
 
             fetch(`/api/qa/task/${taskId}/decision/`, {
                 method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    "X-CSRFToken": getCSRFToken()
-                },
+                headers: { "Content-Type": "application/json", "X-CSRFToken": getCSRFToken() },
                 body: JSON.stringify({
                     action: action,
-                    comments: comments
+                    comments: comments,
+                    mask: dataUrl,
+                    metadata: metadata,
+                    qa_start_time: qaStartTime
                 })
             })
                 .then(res => res.json())
                 .then(data => {
-                    alert(data.message);
-                    if (action === 'reject') closeRejectModal();
-                    // Redirect to QA Dashboard
-                    window.location.href = "/qa/dashboard/";
+                    if (action === 'save') alert("Draft Saved!");
+                    else {
+                        alert(data.message);
+                        window.location.href = "/qa/dashboard/";
+                    }
                 })
                 .catch(err => alert("Error: " + err));
         }
 
-        /* ------------------------------
-           VIEWER UTILS
-        ------------------------------ */
-        function setMaskOpacity(val) {
-            maskCanvas.style.opacity = val;
+        // --- 4. DRAWING & RECORDING LOGIC ---
+
+        // 🔥 FIXED RECORD SHAPE FUNCTION (Matches QC Style)
+        function recordShape(type, data) {
+            const shape = {
+                type: type,
+                left: data.left || 0,
+                top: data.top || 0,
+                width: data.width || 0,
+                height: data.height || 0,
+                // Add standard colors so QA edits look like QC shapes in JSON
+                fill: (type === 'eraser') ? null : "#0064ff80",
+                stroke: (type === 'eraser') ? null : "#0064ff",
+                strokeWidth: 0,
+                points: data.points || [],
+                ...data
+            };
+            storedShapes.push(shape);
+            console.log("Recorded QA Shape:", shape);
         }
 
-        function changeZoom(delta) {
-            const newZoom = Math.max(0.1, Math.min(5.0, currentZoom + delta));
-            applyZoom(newZoom);
+        function getMousePos(e) {
+            const rect = maskCanvas.getBoundingClientRect();
+            const scaleX = maskCanvas.width / rect.width;
+            const scaleY = maskCanvas.height / rect.height;
+            return { x: (e.clientX - rect.left) * scaleX, y: (e.clientY - rect.top) * scaleY };
         }
 
-        function resetZoom() { applyZoom(1.0); }
+        maskCanvas.addEventListener("mousedown", e => {
+            const pos = getMousePos(e);
+            startX = pos.x; startY = pos.y;
+            if (currentTool === tools.POLYGON) { handlePolygonClick(startX, startY); return; }
+            isDrawing = true; saveState();
+            if ([tools.BRUSH, tools.PENCIL, tools.ERASER].includes(currentTool)) currentPath = [{ x: startX, y: startY }];
+        });
 
-        function applyZoom(zoomLevel) {
-            currentZoom = zoomLevel;
-            const cssWidth = originalWidth * currentZoom;
-            const cssHeight = originalHeight * currentZoom;
+        maskCanvas.addEventListener("mousemove", e => {
+            const pos = getMousePos(e);
+            if (currentTool === tools.POLYGON && polygonPoints.length > 0) { drawPolygonPreview(pos.x, pos.y); return; }
+            if (!isDrawing) return;
+            if (currentTool === tools.BRUSH) { maskCtx.beginPath(); maskCtx.arc(pos.x, pos.y, brushSize, 0, Math.PI * 2); maskCtx.fill(); currentPath.push(pos); }
+            else if (currentTool === tools.ERASER) { maskCtx.globalCompositeOperation = "destination-out"; maskCtx.beginPath(); maskCtx.arc(pos.x, pos.y, brushSize, 0, Math.PI * 2); maskCtx.fill(); maskCtx.globalCompositeOperation = "source-over"; }
+            else if (currentTool === tools.PENCIL) { maskCtx.fillRect(Math.floor(pos.x), Math.floor(pos.y), 1, 1); currentPath.push(pos); }
+        });
 
-            imageCanvas.style.width = cssWidth + "px";
-            imageCanvas.style.height = cssHeight + "px";
-            maskCanvas.style.width = cssWidth + "px";
-            maskCanvas.style.height = cssHeight + "px";
+        maskCanvas.addEventListener("mouseup", e => {
+            if (!isDrawing) return; isDrawing = false;
+            const pos = getMousePos(e);
 
-            canvasWrapper.style.width = cssWidth + "px";
-            canvasWrapper.style.height = cssHeight + "px";
-        }
+            // 🔥 UPDATED LOGIC TO CALCULATE POINTS FOR RECT/CIRCLE
+            if (currentTool === tools.RECT) {
+                const w = Math.abs(pos.x - startX);
+                const h = Math.abs(pos.y - startY);
+                const left = Math.min(startX, pos.x);
+                const top = Math.min(startY, pos.y);
 
-        // Mouse Wheel Zoom
-        document.getElementById("canvasContainer").addEventListener("wheel", function (e) {
-            if (e.ctrlKey) {
-                e.preventDefault();
-                const delta = e.deltaY > 0 ? -0.1 : 0.1;
-                changeZoom(delta);
+                maskCtx.fillRect(left, top, w, h);
+
+                // Calculate 4 corner points
+                const pts = [
+                    { x: left, y: top },
+                    { x: left + w, y: top },
+                    { x: left + w, y: top + h },
+                    { x: left, y: top + h }
+                ];
+                recordShape('rect', { left, top, width: w, height: h, points: pts });
+
+            } else if (currentTool === tools.CIRCLE) {
+                const rx = Math.abs(pos.x - startX) / 2;
+                const ry = Math.abs(pos.y - startY) / 2;
+                const cx = (startX + pos.x) / 2;
+                const cy = (startY + pos.y) / 2;
+
+                maskCtx.beginPath(); maskCtx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2); maskCtx.fill();
+                recordShape('circle', {
+                    left: cx - rx, top: cy - ry, width: rx * 2, height: ry * 2,
+                    radiusX: rx, radiusY: ry, center: { x: cx, y: cy },
+                    points: [] // Circles don't strictly need points, but keeping schema consistent
+                });
+
+            } else if ([tools.BRUSH, tools.PENCIL, tools.ERASER].includes(currentTool)) {
+                // Calculate bbox for brush
+                let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+                currentPath.forEach(p => {
+                    if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+                    if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+                });
+                recordShape(currentTool, {
+                    points: [...currentPath],
+                    left: minX, top: minY, width: maxX - minX, height: maxY - minY
+                });
+                currentPath = [];
             }
         });
 
-        function getCSRFToken() {
-            return document.cookie.split("; ").find(row => row.startsWith("csrftoken"))?.split("=")[1];
+        // --- 5. HELPERS ---
+        function setTool(t) { currentTool = t; polygonPoints = []; }
+        function setMaskOpacity(v) { maskCanvas.style.opacity = v; }
+        function changeZoom(d) { currentZoom = Math.max(0.1, currentZoom + d); applyZoom(currentZoom); }
+        function resetZoom() { currentZoom = 1.0; applyZoom(1.0); }
+        function applyZoom(z) {
+            const w = originalWidth * z, h = originalHeight * z;
+            imageCanvas.style.width = maskCanvas.style.width = canvasWrapper.style.width = w + "px";
+            imageCanvas.style.height = maskCanvas.style.height = canvasWrapper.style.height = h + "px";
         }
+        function getCSRFToken() { return document.cookie.split("; ").find(r => r.startsWith("csrftoken"))?.split("=")[1]; }
+
+        function saveState() { undoStack.push(maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height)); if (undoStack.length > 30) undoStack.shift(); redoStack.length = 0; }
+        function undo() { if (undoStack.length) { redoStack.push(maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height)); maskCtx.putImageData(undoStack.pop(), 0, 0); if (storedShapes.length) storedShapes.pop(); } }
+        function redo() { if (redoStack.length) { undoStack.push(maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height)); maskCtx.putImageData(redoStack.pop(), 0, 0); } }
+
+        function handlePolygonClick(x, y) {
+            if (polygonPoints.length === 0) { saveState(); polygonPreviewImage = maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height); }
+            if (polygonPoints.length > 0 && Math.hypot(x - polygonPoints[0].x, y - polygonPoints[0].y) < SNAP_DISTANCE && polygonPoints.length >= 3) { x = polygonPoints[0].x; y = polygonPoints[0].y; }
+            polygonPoints.push({ x, y });
+        }
+        function drawPolygonPreview(x, y) {
+            maskCtx.putImageData(polygonPreviewImage, 0, 0);
+            const first = polygonPoints[0];
+            if (isShiftPressed) { if (Math.abs(x - polygonPoints[polygonPoints.length - 1].x) > Math.abs(y - polygonPoints[polygonPoints.length - 1].y)) y = polygonPoints[polygonPoints.length - 1].y; else x = polygonPoints[polygonPoints.length - 1].x; }
+            maskCtx.beginPath(); maskCtx.moveTo(first.x, first.y);
+            polygonPoints.forEach(p => maskCtx.lineTo(p.x, p.y)); maskCtx.lineTo(x, y);
+            maskCtx.lineWidth = 2; maskCtx.stroke(); maskCtx.lineWidth = 1;
+        }
+        function finishPolygon() {
+            if (polygonPoints.length < 3) return;
+            maskCtx.putImageData(polygonPreviewImage, 0, 0);
+            maskCtx.beginPath(); maskCtx.moveTo(polygonPoints[0].x, polygonPoints[0].y);
+            polygonPoints.forEach(p => maskCtx.lineTo(p.x, p.y)); maskCtx.closePath(); maskCtx.fill();
+
+            // Calculate BBox
+            let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+            polygonPoints.forEach(p => {
+                if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+                if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+            });
+            recordShape('polygon', {
+                left: minX, top: minY, width: maxX - minX, height: maxY - minY,
+                points: [...polygonPoints]
+            });
+            polygonPoints = [];
+        }
+        maskCanvas.addEventListener("dblclick", () => finishPolygon());
+
+        document.addEventListener("keydown", e => {
+            if (e.key === "Shift") isShiftPressed = true;
+            if (e.target.tagName !== "INPUT" && e.target.tagName !== "TEXTAREA") {
+                if (e.key === "b") setTool(tools.BRUSH);
+                if (e.key === "e") setTool(tools.ERASER);
+                if (e.key === "p") setTool(tools.PENCIL);
+                if (e.key === "r") setTool(tools.RECT);
+                if (e.key === "c") setTool(tools.CIRCLE);
+                if (e.key === "g") setTool(tools.POLYGON);
+                if (e.key === "z") undo();
+                if (e.key === "y") redo();
+                if (e.key === "s") saveDraft();
+                if (e.key === "Enter" && currentTool === tools.POLYGON) finishPolygon();
+            }
+        });
+        document.addEventListener("keyup", e => { if (e.key === "Shift") isShiftPressed = false; });
     </script>
 </body>
 

@@ -21,6 +21,13 @@ def task_detail_view(request, task_id):
 
 
 @login_required
+def qa_dashboard_view(request):
+    """
+    Renders the QA Task List page
+    """
+    return render(request, 'segmenter/qa_dashboard.html')
+    
+@login_required
 def qa_tool_view(request, task_id):
     task = get_object_or_404(SegmentationTask, id=task_id)
     return render(request, 'segmenter/qa_tool.html', {'task': task})

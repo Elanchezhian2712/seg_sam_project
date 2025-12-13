@@ -31,55 +31,49 @@ class MyTasksAPIView(APIView):
 
         return Response(data)
 
-
-from django.shortcuts import get_object_or_404
-from django.utils import timezone
-
+import json
+import os
 from django.conf import settings
-from django.shortcuts import get_object_or_404
-from django.utils import timezone
 from rest_framework.views import APIView
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from django.shortcuts import get_object_or_404
 from segmentation.models import SegmentationTask
 from segmentation.utils.media import media_path_to_url
 
 class TaskDetailAPIView(APIView):
-    """
-    View a task details
-    """
     permission_classes = [IsAuthenticated]
 
     def get(self, request, task_id):
-        # NOTE: For QA, we remove 'assigned_to=request.user' filter 
-        # because the QA person is NOT the person assigned to the task.
         task = get_object_or_404(SegmentationTask, id=task_id)
 
-        # 1. Handle permissions (Optional: Ensure user is allowed to view)
-        # if request.user != task.assigned_to and not request.user.is_staff:
-        #     return Response({"error": "Unauthorized"}, status=403)
-
-        # 2. Logic to convert System Path (C:\...) to Web URL (/media/...)
+        # 1. Convert System Path to URL
         mask_url = None
         if task.mask_path:
-            # If path contains the system MEDIA_ROOT, replace it with MEDIA_URL
             if settings.MEDIA_ROOT in task.mask_path:
                 rel_path = task.mask_path.replace(settings.MEDIA_ROOT, "")
-                # Fix Windows slashes to Web slashes
                 mask_url = settings.MEDIA_URL.rstrip('/') + rel_path.replace("\\", "/")
             else:
-                # Fallback if logic matches your media_path_to_url utility
                 mask_url = media_path_to_url(task.mask_path)
 
-        # 3. Return the response WITH the mask_path
+        # 2. READ EXISTING METADATA JSON (The Fix)
+        metadata_content = {}
+        if task.metadata_path and os.path.exists(task.metadata_path):
+            try:
+                with open(task.metadata_path, 'r') as f:
+                    metadata_content = json.load(f)
+            except Exception:
+                metadata_content = {}
+
         return Response({
             "task_id": task.id,
             "assigned_to": task.assigned_to.username if task.assigned_to else "Unassigned",
             "image_name": task.image.file_name,
             "image_path": media_path_to_url(task.image.file_path),
-            "mask_path": mask_url,  # <--- THIS WAS MISSING
+            "mask_path": mask_url,
+            "metadata": metadata_content, 
             "status": task.status,
             "priority": task.priority,
             "start_time": task.start_time,
-            "feedback": task.feedback # Send feedback if it exists
+            "feedback": task.feedback
         })
