@@ -58,6 +58,7 @@ urlpatterns = [
         name='save-mask'
     ),
 
+
     path(
         'api/segmenter/task/<int:task_id>/submit/',
         SubmitTaskAPIView.as_view(),

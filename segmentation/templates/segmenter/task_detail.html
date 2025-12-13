@@ -82,6 +82,8 @@
             <button onclick="undo()">↩ Undo (Z)</button>
             <button onclick="redo()">↪ Redo (Y)</button>
             <button onclick="saveMask()">💾 Save (S)</button>
+
+            <button onclick="submitTask()" style="background-color: #4CAF50; color: white;">✅ Submit Task</button>
         </div>
 
         <!-- ZOOM & OPACITY -->
@@ -375,17 +377,78 @@
             maskCtx.putImageData(redoStack.pop(), 0, 0);
         }
 
-        function saveMask() {
-            const dataUrl = maskCanvas.toDataURL("image/png");
-            fetch(`/api/segmenter/task/${taskId}/save-mask/`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json", "X-CSRFToken": getCSRFToken() },
-                body: JSON.stringify({ mask: dataUrl })
-            }).then(() => alert("Saved!")).catch(() => alert("Failed!"));
-        }
+
 
         function getCSRFToken() {
             return document.cookie.split("; ").find(row => row.startsWith("csrftoken"))?.split("=")[1];
+        }
+
+
+        /* ------------------------------
+   SAVE & SUBMIT FUNCTIONS
+------------------------------ */
+
+        function getMetadata() {
+            // Collect whatever data you want to save
+            return {
+                timestamp: new Date().toISOString(),
+                canvasWidth: maskCanvas.width,
+                canvasHeight: maskCanvas.height,
+                taskId: taskId,
+                toolUsed: currentTool,
+                // If you were tracking vector shapes, you'd add 'polygonPoints' here
+            };
+        }
+
+        function saveMask(isSubmitting = false) {
+            // Temporarily set opacity to 1.0 for saving
+            const oldOpacity = maskCanvas.style.opacity;
+            maskCanvas.style.opacity = "1.0";
+            const dataUrl = maskCanvas.toDataURL("image/png");
+            maskCanvas.style.opacity = oldOpacity;
+
+            const metadata = getMetadata();
+
+            return fetch(`/api/segmenter/task/${taskId}/save-mask/`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "X-CSRFToken": getCSRFToken()
+                },
+                body: JSON.stringify({
+                    mask: dataUrl,
+                    metadata: metadata // <--- Sending JSON data
+                })
+            })
+                .then(res => {
+                    if (!res.ok) throw new Error("Save failed");
+                    return res.json();
+                });
+        }
+
+        function submitTask() {
+            if (!confirm("Are you sure you want to finish this task?")) return;
+
+            // First Auto-Save, then Submit
+            saveMask(true)
+                .then(() => {
+                    return fetch(`/api/segmenter/task/${taskId}/submit/`, {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json",
+                            "X-CSRFToken": getCSRFToken()
+                        }
+                    });
+                })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.error) {
+                        alert(data.error);
+                    } else {
+                        alert("Task Submitted Successfully!");
+                    }
+                })
+                .catch(err => alert("Error submitting: " + err));
         }
 
         /* ------------------------------
