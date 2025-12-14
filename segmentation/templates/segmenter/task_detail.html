@@ -1,3 +1,5 @@
+{% load static %}
+
 <!DOCTYPE html>
 <html>
 
@@ -5,7 +7,7 @@
     <title>Segmentation Task</title>
     <meta charset="UTF-8" />
     <!-- Fabric.js Library -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.0/fabric.min.js"></script>
+    <script src="{% static 'js/fabric.min.js' %}"></script>
 
     <style>
         body {
@@ -143,15 +145,39 @@
         const parts = window.location.pathname.split("/").filter(Boolean);
         const taskId = parts[parts.length - 1];
 
-        // Image canvas (background)
         const imageCanvas = document.getElementById("imageCanvas");
         const imgCtx = imageCanvas.getContext("2d");
 
-        // Fabric.js canvas (for annotations)
         const canvas = new fabric.Canvas('fabricCanvas', {
             isDrawingMode: false,
-            selection: false,
-            backgroundColor: 'transparent'
+            selection: true,
+            backgroundColor: 'transparent',
+            preserveObjectStacking: true
+        });
+
+        canvas.on('mouse:down', function (e) {
+            const pointer = canvas.getPointer(e.e);
+            const objects = canvas.getObjects();
+            objects.forEach((obj, i) => {
+                if (obj.type !== 'image') {
+                    console.log(`  Object ${i} (${obj.type}):`, {
+                        left: obj.left,
+                        top: obj.top,
+                        width: obj.width || (obj.rx * 2),
+                        height: obj.height || (obj.ry * 2),
+                        selectable: obj.selectable,
+                        evented: obj.evented,
+                        visible: obj.visible,
+                        opacity: obj.opacity
+                    });
+
+                    // Manual bounds check
+                    const right = obj.left + (obj.width || obj.rx * 2);
+                    const bottom = obj.top + (obj.height || obj.ry * 2);
+                    const inside = pointer.x >= obj.left && pointer.x <= right &&
+                        pointer.y >= obj.top && pointer.y <= bottom;
+                }
+            });
         });
 
         /* ------------------------------
@@ -190,9 +216,10 @@
         let currentShape = null;
 
         /* ------------------------------
-           TOOL SELECTION
+           TOOL SELECTION - FIXED WITH LOGGING
         ------------------------------ */
         function setTool(tool) {
+
             currentTool = tool;
 
             document.querySelectorAll('.tool-group button').forEach(btn => {
@@ -204,53 +231,50 @@
                 clearPolygon();
             }
 
-            if (tool === tools.SELECT) {
-                canvas.isDrawingMode = false;
-                canvas.selection = true;
+            // Deactivate drawing mode for all tools except brush/pencil/eraser
+            canvas.isDrawingMode = (tool === tools.BRUSH || tool === tools.PENCIL || tool === tools.ERASER);
 
-                canvas.getObjects().forEach(obj => {
-                    if (obj.type !== 'image') {
+            if (tool === tools.SELECT) {
+                canvas.selection = true;
+                canvas.getObjects().forEach((obj, index) => {
+                    const isEraserPath = obj.globalCompositeOperation === 'destination-out';
+                    if (!isEraserPath && obj.type !== 'image') {
                         obj.selectable = true;
                         obj.evented = true;
+                        obj.hasControls = true;
+                        obj.hasBorders = true;
+                        obj.lockMovementX = false;
+                        obj.lockMovementY = false;
+                    } else {
+                        obj.selectable = false;
+                        obj.evented = false;
                     }
                 });
-            } else if (tool === tools.BRUSH || tool === tools.PENCIL) {
-                canvas.isDrawingMode = true;
-                canvas.selection = false;
 
+            } else if (tool === tools.BRUSH || tool === tools.PENCIL) {
+                canvas.selection = false;
                 canvas.freeDrawingBrush = new fabric.PencilBrush(canvas);
                 canvas.freeDrawingBrush.color = 'rgba(0, 100, 255, 0.8)';
                 canvas.freeDrawingBrush.width = tool === tools.PENCIL ? 1 : brushSize;
-                canvas.freeDrawingBrush.globalCompositeOperation = 'source-over'; // Normal drawing
-
+                canvas.freeDrawingBrush.globalCompositeOperation = 'source-over';
                 canvas.discardActiveObject();
                 canvas.getObjects().forEach(obj => {
                     obj.selectable = false;
                     obj.evented = false;
                 });
             } else if (tool === tools.ERASER) {
-                canvas.isDrawingMode = true;
                 canvas.selection = false;
-
                 canvas.freeDrawingBrush = new fabric.PencilBrush(canvas);
                 canvas.freeDrawingBrush.width = brushSize;
                 canvas.freeDrawingBrush.color = '#FFFFFF';
-
                 canvas.freeDrawingBrush.globalCompositeOperation = 'destination-out';
-
                 canvas.discardActiveObject();
                 canvas.getObjects().forEach(obj => {
                     obj.selectable = false;
                     obj.evented = false;
-
-                    if (obj.type === 'image') {
-                        obj.erasable = false;
-                    }
                 });
             } else {
-                canvas.isDrawingMode = false;
                 canvas.selection = false;
-
                 canvas.discardActiveObject();
                 canvas.getObjects().forEach(obj => {
                     obj.selectable = false;
@@ -331,9 +355,15 @@
         });
 
         /* ------------------------------
-           SHAPE DRAWING (RECT, CIRCLE)
+           SHAPE DRAWING (RECT, CIRCLE) 
         ------------------------------ */
-        canvas.on('mouse:down', function (options) {
+        let shapeDrawingMouseDown, shapeDrawingMouseMove, shapeDrawingMouseUp;
+
+        shapeDrawingMouseDown = function (options) {
+            if (currentTool === tools.SELECT) {
+                return;
+            }
+
             if (currentTool === tools.POLYGON) {
                 handlePolygonClick(options);
                 return;
@@ -356,6 +386,7 @@
                         stroke: 'rgb(0, 100, 255)',
                         strokeWidth: 1,
                         selectable: false,
+                        evented: false,
                         opacity: maskOpacity
                     });
                 } else if (currentTool === tools.CIRCLE) {
@@ -368,15 +399,22 @@
                         stroke: 'rgb(0, 100, 255)',
                         strokeWidth: 1,
                         selectable: false,
+                        evented: false,
                         opacity: maskOpacity
                     });
                 }
 
                 canvas.add(currentShape);
+                canvas.renderAll();
             }
-        });
+        };
 
-        canvas.on('mouse:move', function (options) {
+        shapeDrawingMouseMove = function (options) {
+            // Don't interfere with selection in SELECT mode
+            if (currentTool === tools.SELECT) {
+                return;
+            }
+
             if (!isDrawingShape || !currentShape) return;
 
             const pointer = canvas.getPointer(options.e);
@@ -404,15 +442,40 @@
             }
 
             canvas.renderAll();
-        });
+        };
 
-        canvas.on('mouse:up', function (options) {
-            if (isDrawingShape) {
+        shapeDrawingMouseUp = function (options) {
+            if (currentTool === tools.SELECT) {
+                return;
+            }
+
+            if (isDrawingShape && currentShape) {
+                currentShape.set({
+                    evented: true,
+                    selectable: true,
+                    hasControls: true,
+                    hasBorders: true
+                });
+
                 isDrawingShape = false;
+                const finishedShape = currentShape;
                 currentShape = null;
                 shapeStartPoint = null;
+
+                canvas.renderAll();
+
+                setTimeout(() => {
+                    setTool(tools.SELECT);
+
+                    canvas.setActiveObject(finishedShape);
+                    canvas.renderAll();
+                }, 10);
             }
-        });
+        };
+
+        canvas.on('mouse:down', shapeDrawingMouseDown);
+        canvas.on('mouse:move', shapeDrawingMouseMove);
+        canvas.on('mouse:up', shapeDrawingMouseUp);
 
         /* ------------------------------
            POLYGON TOOL
@@ -457,7 +520,8 @@
                 ], {
                     stroke: 'white',
                     strokeWidth: 2,
-                    selectable: false
+                    selectable: false,
+                    evented: false
                 }));
             }
 
@@ -469,12 +533,14 @@
                     fill: 'white',
                     stroke: 'black',
                     strokeWidth: 1,
-                    selectable: false
+                    selectable: false,
+                    evented: false
                 }));
             });
 
             polygonLineGroup = new fabric.Group(lines, {
-                selectable: false
+                selectable: false,
+                evented: false
             });
 
             canvas.add(polygonLineGroup);
@@ -483,6 +549,8 @@
 
         function finishPolygon() {
             if (polygonPoints.length < 3) return;
+
+            console.log('>>> Finishing polygon with', polygonPoints.length, 'points');
 
             if (polygonLineGroup) {
                 canvas.remove(polygonLineGroup);
@@ -493,15 +561,25 @@
                 fill: 'rgba(0, 100, 255, 0.8)',
                 stroke: 'rgb(0, 100, 255)',
                 strokeWidth: 1,
-                selectable: false,
+                selectable: true,
+                evented: true,
                 opacity: maskOpacity
             });
 
+            console.log('Polygon created:', {
+                type: polygon.type,
+                selectable: polygon.selectable,
+                evented: polygon.evented
+            });
+
             canvas.add(polygon);
+            console.log('Polygon added. Total objects:', canvas.getObjects().length);
             canvas.renderAll();
 
             polygonPoints = [];
             isDrawingPolygon = false;
+
+            setTool(tools.SELECT);
         }
 
         function clearPolygon() {
@@ -524,7 +602,7 @@
            UNDO / REDO
         ------------------------------ */
         function saveState() {
-            const json = JSON.stringify(canvas.toJSON(['selectable']));
+            const json = JSON.stringify(canvas.toJSON(['selectable', 'evented', 'globalCompositeOperation']));
             historyStack.push(json);
 
             if (historyStack.length > MAX_HISTORY) {
@@ -537,33 +615,37 @@
         function undo() {
             if (historyStack.length === 0) return;
 
-            const currentState = JSON.stringify(canvas.toJSON(['selectable']));
+            const currentState = JSON.stringify(canvas.toJSON(['selectable', 'evented', 'globalCompositeOperation']));
             redoStack.push(currentState);
 
             const previousState = historyStack.pop();
             canvas.loadFromJSON(previousState, function () {
                 canvas.renderAll();
+                setTool(currentTool);
             });
         }
 
         function redo() {
             if (redoStack.length === 0) return;
 
-            const currentState = JSON.stringify(canvas.toJSON(['selectable']));
+            const currentState = JSON.stringify(canvas.toJSON(['selectable', 'evented', 'globalCompositeOperation']));
             historyStack.push(currentState);
 
             const nextState = redoStack.pop();
             canvas.loadFromJSON(nextState, function () {
                 canvas.renderAll();
+                setTool(currentTool);
             });
         }
 
-        // Auto-save state after path creation
         canvas.on('path:created', function (e) {
             if (currentTool === tools.ERASER) {
                 e.path.globalCompositeOperation = 'destination-out';
                 e.path.selectable = false;
                 e.path.evented = false;
+            } else {
+                e.path.selectable = true;
+                e.path.evented = true;
             }
             saveState();
         });
@@ -573,8 +655,14 @@
         ------------------------------ */
         function deleteSelected() {
             const activeObjects = canvas.getActiveObjects();
-            if (activeObjects.length === 0) return;
+            console.log('>>> DELETE called. Active objects:', activeObjects.length);
 
+            if (activeObjects.length === 0) {
+                console.log('No objects selected to delete');
+                return;
+            }
+
+            console.log('Deleting objects:', activeObjects.map(obj => obj.type));
             saveState();
 
             activeObjects.forEach(obj => {
@@ -583,20 +671,16 @@
 
             canvas.discardActiveObject();
             canvas.renderAll();
+            console.log('Objects deleted. Remaining:', canvas.getObjects().length);
         }
 
         /* ------------------------------
            API CALLS
         ------------------------------ */
         function getMetadata() {
-            const canvasJSON = canvas.toJSON(['selectable']);
-
+            const canvasJSON = canvas.toJSON(['selectable', 'evented', 'globalCompositeOperation']);
             return {
-                meta: {
-                    original_width: originalWidth,
-                    original_height: originalHeight,
-                    timestamp: new Date().toISOString()
-                },
+                meta: { original_width: originalWidth, original_height: originalHeight, timestamp: new Date().toISOString() },
                 fabricJSON: canvasJSON,
                 shapes: convertFabricToShapes(canvasJSON)
             };

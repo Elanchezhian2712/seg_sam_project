@@ -1,9 +1,13 @@
+from django.utils import timezone
 from django.conf import settings
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from segmentation.models import SegmentationTask
 from segmentation.utils.media import media_path_to_url
+import json
+import os
+from django.shortcuts import get_object_or_404
 
 
 class MyTasksAPIView(APIView):
@@ -31,23 +35,18 @@ class MyTasksAPIView(APIView):
 
         return Response(data)
 
-import json
-import os
-from django.conf import settings
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
-from django.shortcuts import get_object_or_404
-from segmentation.models import SegmentationTask
-from segmentation.utils.media import media_path_to_url
 
 class TaskDetailAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, task_id):
-        task = get_object_or_404(SegmentationTask, id=task_id)
+        task = get_object_or_404(SegmentationTask, id=task_id, assigned_to=request.user)
 
-        # 1. Convert System Path to URL
+        if task.status == 'ASSIGNED' and task.start_time is None:
+            task.start_time = timezone.now()
+            task.status = 'IN_PROGRESS'
+            task.save(update_fields=['start_time', 'status', 'updated_at'])
+
         mask_url = None
         if task.mask_path:
             if settings.MEDIA_ROOT in task.mask_path:
@@ -56,7 +55,6 @@ class TaskDetailAPIView(APIView):
             else:
                 mask_url = media_path_to_url(task.mask_path)
 
-        # 2. READ EXISTING METADATA JSON (The Fix)
         metadata_content = {}
         if task.metadata_path and os.path.exists(task.metadata_path):
             try:
@@ -74,6 +72,6 @@ class TaskDetailAPIView(APIView):
             "metadata": metadata_content, 
             "status": task.status,
             "priority": task.priority,
-            "start_time": task.start_time,
+            "start_time": task.start_time, 
             "feedback": task.feedback
         })
