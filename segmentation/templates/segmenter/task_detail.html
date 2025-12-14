@@ -4,26 +4,25 @@
 <head>
     <title>Segmentation Task</title>
     <meta charset="UTF-8" />
+    <!-- Fabric.js Library -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.0/fabric.min.js"></script>
 
     <style>
         body {
             font-family: Arial, sans-serif;
             margin: 20px;
-            /* Prevent full page scroll when drawing */
             overflow: hidden;
             height: 100vh;
             display: flex;
             flex-direction: column;
         }
 
-        /* Toolbar Styling */
         .toolbar {
             margin-bottom: 10px;
             padding: 10px;
             background: #f0f0f0;
             border-radius: 5px;
             flex-shrink: 0;
-            /* Don't shrink toolbar */
         }
 
         .tool-group {
@@ -33,33 +32,52 @@
             padding-right: 20px;
         }
 
-        /* 
-           CONTAINER FOR ZOOMING 
-           This box stays the same size on screen, but handles scrollbars 
-        */
+        .tool-group:last-child {
+            border-right: none;
+        }
+
+        button {
+            padding: 5px 10px;
+            margin: 2px;
+            cursor: pointer;
+        }
+
+        button.active {
+            background-color: #4CAF50;
+            color: white;
+        }
+
         #canvasContainer {
             flex-grow: 1;
-            /* Fill remaining height */
             overflow: auto;
-            /* Show scrollbars if zoomed */
             border: 2px solid #999;
             background-color: #333;
-            /* Dark background for easier viewing */
             position: relative;
             display: flex;
             justify-content: center;
             align-items: center;
         }
 
-        /* The wrapper that actually gets resized by CSS */
         #canvasWrapper {
             position: relative;
             box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
+            display: inline-block;
         }
 
-        canvas {
+        #imageCanvas {
             display: block;
-            /* Important: Width/Height controlled by JS for Zoom */
+        }
+
+        #fabricCanvas {
+            position: absolute;
+            left: 0;
+            top: 0;
+        }
+
+        .canvas-container {
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
         }
     </style>
 </head>
@@ -69,20 +87,21 @@
     <div class="toolbar">
         <!-- TOOLS -->
         <div class="tool-group">
-            <button onclick="setTool('brush')">🖌 Brush (B)</button>
-            <button onclick="setTool('eraser')">🧽 Eraser (E)</button>
-            <button onclick="setTool('pencil')">✏️ Pencil (P)</button>
-            <button onclick="setTool('rect')">⬛ Rect (R)</button>
-            <button onclick="setTool('circle')">⚪ Circle (C)</button>
-            <button onclick="setTool('polygon')">🔺 Polygon (G)</button>
+            <button id="btn-select" onclick="setTool('select')">👆 Select (V)</button>
+            <button id="btn-brush" onclick="setTool('brush')">🖌 Brush (B)</button>
+            <button id="btn-eraser" onclick="setTool('eraser')">🧽 Eraser (E)</button>
+            <button id="btn-pencil" onclick="setTool('pencil')">✏️ Pencil (P)</button>
+            <button id="btn-rect" onclick="setTool('rect')">⬛ Rect (R)</button>
+            <button id="btn-circle" onclick="setTool('circle')">⚪ Circle (C)</button>
+            <button id="btn-polygon" onclick="setTool('polygon')">🔺 Polygon (G)</button>
         </div>
 
         <!-- ACTIONS -->
         <div class="tool-group">
+            <button onclick="deleteSelected()" id="btn-delete">🗑️ Delete (Del)</button>
             <button onclick="undo()">↩ Undo (Z)</button>
             <button onclick="redo()">↪ Redo (Y)</button>
             <button onclick="saveMask()">💾 Save (S)</button>
-
             <button onclick="submitTask()" style="background-color: #4CAF50; color: white;">✅ Submit Task</button>
         </div>
 
@@ -96,11 +115,12 @@
         </div>
 
         <div>
-            Opacity: <input type="range" min="0.0" max="1.0" step="0.1" value="0.5" oninput="setMaskOpacity(this.value)"
-                style="vertical-align: middle;">
+            Opacity: <input type="range" min="0.0" max="1.0" step="0.1" value="0.5" id="opacitySlider"
+                oninput="setMaskOpacity(this.value)" style="vertical-align: middle;">
             &nbsp;|&nbsp;
-            Brush: <input type="range" min="1" max="50" value="10" oninput="brushSize=this.value"
+            Brush: <input type="range" min="1" max="50" value="10" id="brushSlider" oninput="setBrushSize(this.value)"
                 style="vertical-align: middle;">
+            <span id="brushSizeDisplay">10px</span>
         </div>
 
         <div style="margin-top:5px; font-size: 0.85em; color: #666;">
@@ -112,7 +132,7 @@
     <div id="canvasContainer">
         <div id="canvasWrapper">
             <canvas id="imageCanvas"></canvas>
-            <canvas id="maskCanvas" style="position:absolute; left:0; top:0; opacity: 0.5;"></canvas>
+            <canvas id="fabricCanvas"></canvas>
         </div>
     </div>
 
@@ -123,42 +143,145 @@
         const parts = window.location.pathname.split("/").filter(Boolean);
         const taskId = parts[parts.length - 1];
 
-        const canvasWrapper = document.getElementById("canvasWrapper");
+        // Image canvas (background)
         const imageCanvas = document.getElementById("imageCanvas");
-        const maskCanvas = document.getElementById("maskCanvas");
-
         const imgCtx = imageCanvas.getContext("2d");
-        const maskCtx = maskCanvas.getContext("2d", { willReadFrequently: true });
 
-        // Set drawing color
-        maskCtx.fillStyle = "rgb(0, 100, 255)";
-        maskCtx.strokeStyle = "rgb(0, 100, 255)";
-
-        /* ------------------------------
-           DATA STORAGE (JSON)
-        ------------------------------ */
-        let storedShapes = []; // Stores all vector data
-        let currentPath = [];  // Temporarily holds points for Brush/Pencil
+        // Fabric.js canvas (for annotations)
+        const canvas = new fabric.Canvas('fabricCanvas', {
+            isDrawingMode: false,
+            selection: false,
+            backgroundColor: 'transparent'
+        });
 
         /* ------------------------------
-           ZOOM STATE
+           STATE MANAGEMENT
         ------------------------------ */
+        const tools = {
+            SELECT: "select",
+            BRUSH: "brush",
+            ERASER: "eraser",
+            PENCIL: "pencil",
+            RECT: "rect",
+            CIRCLE: "circle",
+            POLYGON: "polygon"
+        };
+
+        let currentTool = tools.BRUSH;
+        let brushSize = 10;
+        let maskOpacity = 0.5;
         let currentZoom = 1.0;
         let originalWidth = 0;
         let originalHeight = 0;
 
-        /* ------------------------------
-           TOOL STATE
-        ------------------------------ */
-        const tools = { BRUSH: "brush", ERASER: "eraser", PENCIL: "pencil", RECT: "rect", CIRCLE: "circle", POLYGON: "polygon" };
-        let currentTool = tools.BRUSH;
-        let brushSize = 10;
-        let isDrawing = false;
-        let startX = 0, startY = 0;
+        // Undo/Redo stacks
+        let historyStack = [];
+        let redoStack = [];
+        const MAX_HISTORY = 30;
+
+        // Polygon state
         let polygonPoints = [];
-        let polygonPreviewImage = null;
-        let isShiftPressed = false;
-        const SNAP_DISTANCE = 10;
+        let polygonLineGroup = null;
+        let isDrawingPolygon = false;
+
+        // Shape drawing state
+        let isDrawingShape = false;
+        let shapeStartPoint = null;
+        let currentShape = null;
+
+        /* ------------------------------
+           TOOL SELECTION
+        ------------------------------ */
+        function setTool(tool) {
+            currentTool = tool;
+
+            document.querySelectorAll('.tool-group button').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            document.getElementById(`btn-${tool}`)?.classList.add('active');
+
+            if (tool !== tools.POLYGON) {
+                clearPolygon();
+            }
+
+            if (tool === tools.SELECT) {
+                canvas.isDrawingMode = false;
+                canvas.selection = true;
+
+                canvas.getObjects().forEach(obj => {
+                    if (obj.type !== 'image') {
+                        obj.selectable = true;
+                        obj.evented = true;
+                    }
+                });
+            } else if (tool === tools.BRUSH || tool === tools.PENCIL) {
+                canvas.isDrawingMode = true;
+                canvas.selection = false;
+
+                canvas.freeDrawingBrush = new fabric.PencilBrush(canvas);
+                canvas.freeDrawingBrush.color = 'rgba(0, 100, 255, 0.8)';
+                canvas.freeDrawingBrush.width = tool === tools.PENCIL ? 1 : brushSize;
+                canvas.freeDrawingBrush.globalCompositeOperation = 'source-over'; // Normal drawing
+
+                canvas.discardActiveObject();
+                canvas.getObjects().forEach(obj => {
+                    obj.selectable = false;
+                    obj.evented = false;
+                });
+            } else if (tool === tools.ERASER) {
+                canvas.isDrawingMode = true;
+                canvas.selection = false;
+
+                canvas.freeDrawingBrush = new fabric.PencilBrush(canvas);
+                canvas.freeDrawingBrush.width = brushSize;
+                canvas.freeDrawingBrush.color = '#FFFFFF';
+
+                canvas.freeDrawingBrush.globalCompositeOperation = 'destination-out';
+
+                canvas.discardActiveObject();
+                canvas.getObjects().forEach(obj => {
+                    obj.selectable = false;
+                    obj.evented = false;
+
+                    if (obj.type === 'image') {
+                        obj.erasable = false;
+                    }
+                });
+            } else {
+                canvas.isDrawingMode = false;
+                canvas.selection = false;
+
+                canvas.discardActiveObject();
+                canvas.getObjects().forEach(obj => {
+                    obj.selectable = false;
+                    obj.evented = false;
+                });
+            }
+
+            canvas.renderAll();
+        }
+
+        /* ------------------------------
+           BRUSH SIZE & OPACITY
+        ------------------------------ */
+        function setBrushSize(size) {
+            brushSize = parseInt(size);
+            document.getElementById('brushSizeDisplay').innerText = brushSize + 'px';
+
+            if (canvas.freeDrawingBrush) {
+                canvas.freeDrawingBrush.width = brushSize;
+            }
+        }
+
+        function setMaskOpacity(value) {
+            maskOpacity = parseFloat(value);
+            canvas.getObjects().forEach(obj => {
+                if (obj.type !== 'image') {
+                    obj.set('opacity', maskOpacity);
+                }
+            });
+            canvas.renderAll();
+        }
 
         /* ------------------------------
            ZOOM FUNCTIONS
@@ -167,315 +290,434 @@
             const newZoom = Math.max(0.1, Math.min(5.0, currentZoom + delta));
             applyZoom(newZoom);
         }
-        function resetZoom() { applyZoom(1.0); }
+
+        function resetZoom() {
+            applyZoom(1.0);
+        }
 
         function applyZoom(zoomLevel) {
             currentZoom = zoomLevel;
             document.getElementById("zoomDisplay").innerText = Math.round(currentZoom * 100) + "%";
-            const cssWidth = originalWidth * currentZoom;
-            const cssHeight = originalHeight * currentZoom;
-            imageCanvas.style.width = cssWidth + "px";
-            imageCanvas.style.height = cssHeight + "px";
-            maskCanvas.style.width = cssWidth + "px";
-            maskCanvas.style.height = cssHeight + "px";
-            canvasWrapper.style.width = cssWidth + "px";
-            canvasWrapper.style.height = cssHeight + "px";
+
+            const newWidth = originalWidth * currentZoom;
+            const newHeight = originalHeight * currentZoom;
+
+            canvas.setZoom(currentZoom);
+            canvas.setWidth(newWidth);
+            canvas.setHeight(newHeight);
+
+            imageCanvas.style.width = newWidth + 'px';
+            imageCanvas.style.height = newHeight + 'px';
+
+            const canvasWrapper = document.getElementById('canvasWrapper');
+            canvasWrapper.style.width = newWidth + 'px';
+            canvasWrapper.style.height = newHeight + 'px';
+
+            canvas.renderAll();
         }
 
-        /* ------------------------------
-           COORDINATE HELPER
-        ------------------------------ */
-        function getMousePos(e) {
-            const rect = maskCanvas.getBoundingClientRect();
-            const scaleX = maskCanvas.width / rect.width;
-            const scaleY = maskCanvas.height / rect.height;
-            return {
-                x: (e.clientX - rect.left) * scaleX,
-                y: (e.clientY - rect.top) * scaleY
-            };
-        }
+        canvas.on('mouse:wheel', function (opt) {
+            const delta = opt.e.deltaY;
+            let zoom = canvas.getZoom();
+            zoom *= 0.999 ** delta;
+
+            if (zoom > 5) zoom = 5;
+            if (zoom < 0.1) zoom = 0.1;
+
+            applyZoom(zoom);
+
+            opt.e.preventDefault();
+            opt.e.stopPropagation();
+        });
 
         /* ------------------------------
-           MOUSE EVENTS
+           SHAPE DRAWING (RECT, CIRCLE)
         ------------------------------ */
-        maskCanvas.addEventListener("mousedown", e => {
-            const pos = getMousePos(e);
-            startX = pos.x;
-            startY = pos.y;
-
+        canvas.on('mouse:down', function (options) {
             if (currentTool === tools.POLYGON) {
-                handlePolygonClick(startX, startY);
+                handlePolygonClick(options);
                 return;
             }
 
-            isDrawing = true;
-            saveState(); // Save pixel state for Undo
+            if (currentTool === tools.RECT || currentTool === tools.CIRCLE) {
+                isDrawingShape = true;
+                const pointer = canvas.getPointer(options.e);
+                shapeStartPoint = pointer;
 
-            // For Brush/Pencil/Eraser, start recording path
-            if ([tools.BRUSH, tools.PENCIL, tools.ERASER].includes(currentTool)) {
-                currentPath = [{ x: startX, y: startY }];
+                saveState();
+
+                if (currentTool === tools.RECT) {
+                    currentShape = new fabric.Rect({
+                        left: pointer.x,
+                        top: pointer.y,
+                        width: 0,
+                        height: 0,
+                        fill: 'rgba(0, 100, 255, 0.8)',
+                        stroke: 'rgb(0, 100, 255)',
+                        strokeWidth: 1,
+                        selectable: false,
+                        opacity: maskOpacity
+                    });
+                } else if (currentTool === tools.CIRCLE) {
+                    currentShape = new fabric.Ellipse({
+                        left: pointer.x,
+                        top: pointer.y,
+                        rx: 0,
+                        ry: 0,
+                        fill: 'rgba(0, 100, 255, 0.8)',
+                        stroke: 'rgb(0, 100, 255)',
+                        strokeWidth: 1,
+                        selectable: false,
+                        opacity: maskOpacity
+                    });
+                }
+
+                canvas.add(currentShape);
             }
         });
 
-        maskCanvas.addEventListener("mousemove", e => {
-            const pos = getMousePos(e);
-            const mouseX = pos.x;
-            const mouseY = pos.y;
+        canvas.on('mouse:move', function (options) {
+            if (!isDrawingShape || !currentShape) return;
 
-            if (currentTool === tools.POLYGON && polygonPoints.length > 0) {
-                drawPolygonPreview(mouseX, mouseY);
-                return;
-            }
+            const pointer = canvas.getPointer(options.e);
 
-            if (!isDrawing) return;
-
-            // Draw Pixels
-            if (currentTool === tools.BRUSH) drawBrush(mouseX, mouseY);
-            else if (currentTool === tools.ERASER) erase(mouseX, mouseY);
-            else if (currentTool === tools.PENCIL) drawPixel(mouseX, mouseY);
-
-            // Record Coordinates for Brush/Pencil/Eraser
-            if ([tools.BRUSH, tools.PENCIL, tools.ERASER].includes(currentTool)) {
-                currentPath.push({ x: mouseX, y: mouseY });
-            }
-        });
-
-        maskCanvas.addEventListener("mouseup", e => {
-            if (!isDrawing) return;
-            isDrawing = false;
-            const pos = getMousePos(e);
-            const endX = pos.x;
-            const endY = pos.y;
-
-            // 1. Draw Shapes & Store Data
             if (currentTool === tools.RECT) {
-                drawRect(startX, startY, endX, endY);
+                const width = pointer.x - shapeStartPoint.x;
+                const height = pointer.y - shapeStartPoint.y;
 
-                // Store Rectangle JSON
-                const w = Math.abs(endX - startX);
-                const h = Math.abs(endY - startY);
-                const left = Math.min(startX, endX);
-                const top = Math.min(startY, endY);
+                currentShape.set({
+                    width: Math.abs(width),
+                    height: Math.abs(height),
+                    left: width > 0 ? shapeStartPoint.x : pointer.x,
+                    top: height > 0 ? shapeStartPoint.y : pointer.y
+                });
+            } else if (currentTool === tools.CIRCLE) {
+                const rx = Math.abs(pointer.x - shapeStartPoint.x) / 2;
+                const ry = Math.abs(pointer.y - shapeStartPoint.y) / 2;
 
-                recordShape("rectangle", {
-                    left: left, top: top, width: w, height: h,
-                    points: [{ x: left, y: top }, { x: left + w, y: top }, { x: left + w, y: top + h }, { x: left, y: top + h }]
+                currentShape.set({
+                    rx: rx,
+                    ry: ry,
+                    left: Math.min(pointer.x, shapeStartPoint.x),
+                    top: Math.min(pointer.y, shapeStartPoint.y)
                 });
             }
-            else if (currentTool === tools.CIRCLE) {
-                drawCircle(startX, startY, endX, endY);
 
-                // Store Circle JSON
-                const rx = Math.abs(endX - startX) / 2;
-                const ry = Math.abs(endY - startY) / 2;
-                const cx = (startX + endX) / 2;
-                const cy = (startY + endY) / 2;
+            canvas.renderAll();
+        });
 
-                recordShape("circle", {
-                    left: cx - rx, top: cy - ry, width: rx * 2, height: ry * 2,
-                    radiusX: rx, radiusY: ry,
-                    center: { x: cx, y: cy }
-                });
-            }
-            else if ([tools.BRUSH, tools.PENCIL, tools.ERASER].includes(currentTool)) {
-                // Store Path JSON
-                // We calculate a bounding box for the path just in case you need it
-                let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-                currentPath.forEach(p => {
-                    if (p.x < minX) minX = p.x;
-                    if (p.x > maxX) maxX = p.x;
-                    if (p.y < minY) minY = p.y;
-                    if (p.y > maxY) maxY = p.y;
-                });
-
-                recordShape(currentTool, { // type will be 'brush', 'pencil' or 'eraser'
-                    points: [...currentPath], // Copy array
-                    strokeWidth: (currentTool === tools.PENCIL) ? 1 : brushSize,
-                    left: minX, top: minY, width: maxX - minX, height: maxY - minY
-                });
-                currentPath = [];
+        canvas.on('mouse:up', function (options) {
+            if (isDrawingShape) {
+                isDrawingShape = false;
+                currentShape = null;
+                shapeStartPoint = null;
             }
         });
 
         /* ------------------------------
-           DATA RECORDING HELPER
+           POLYGON TOOL
         ------------------------------ */
-        function recordShape(type, data) {
-            const shape = {
-                type: type,
-                left: data.left || 0,
-                top: data.top || 0,
-                width: data.width || 0,
-                height: data.height || 0,
-                fill: (type === 'eraser') ? null : "#0064ff80",
-                stroke: (type === 'eraser') ? null : "#0064ff",
-                strokeWidth: data.strokeWidth || 0,
-                points: data.points || [], // Array of {x,y}
-                // Add specific props
-                ...data
-            };
+        function handlePolygonClick(options) {
+            const pointer = canvas.getPointer(options.e);
 
-            // Remove 'points' from spread if it duplicates, but JS handles it.
-            storedShapes.push(shape);
-            console.log("Recorded:", shape);
-        }
-
-        /* ------------------------------
-           DRAWING FUNCTIONS (PIXELS)
-        ------------------------------ */
-        function drawBrush(x, y) {
-            maskCtx.beginPath();
-            maskCtx.arc(x, y, brushSize, 0, Math.PI * 2);
-            maskCtx.fill();
-        }
-        function erase(x, y) {
-            maskCtx.globalCompositeOperation = "destination-out";
-            maskCtx.beginPath();
-            maskCtx.arc(x, y, brushSize, 0, Math.PI * 2);
-            maskCtx.fill();
-            maskCtx.globalCompositeOperation = "source-over";
-        }
-        function drawPixel(x, y) { maskCtx.fillRect(Math.floor(x), Math.floor(y), 1, 1); }
-        function drawRect(x1, y1, x2, y2) {
-            maskCtx.fillRect(Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1));
-        }
-        function drawCircle(x1, y1, x2, y2) {
-            const cx = (x1 + x2) / 2; const cy = (y1 + y2) / 2;
-            const rx = Math.abs(x2 - x1) / 2; const ry = Math.abs(y2 - y1) / 2;
-            maskCtx.beginPath(); maskCtx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2); maskCtx.fill();
-        }
-
-        /* ------------------------------
-           POLYGON LOGIC
-        ------------------------------ */
-        function handlePolygonClick(px, py) {
             if (polygonPoints.length === 0) {
                 saveState();
-                polygonPreviewImage = maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height);
+                isDrawingPolygon = true;
             }
-            if (polygonPoints.length > 0) {
-                const first = polygonPoints[0];
-                if (Math.hypot(px - first.x, py - first.y) < SNAP_DISTANCE && polygonPoints.length >= 3) {
-                    px = first.x; py = first.y;
+
+            if (polygonPoints.length >= 3) {
+                const firstPoint = polygonPoints[0];
+                const distance = Math.sqrt(
+                    Math.pow(pointer.x - firstPoint.x, 2) +
+                    Math.pow(pointer.y - firstPoint.y, 2)
+                );
+
+                if (distance < 10) {
+                    finishPolygon();
+                    return;
                 }
             }
-            polygonPoints.push({ x: px, y: py });
+
+            polygonPoints.push({ x: pointer.x, y: pointer.y });
+            updatePolygonPreview();
         }
 
-        function drawPolygonPreview(currX, currY) {
-            maskCtx.putImageData(polygonPreviewImage, 0, 0);
-            const first = polygonPoints[0];
-            const last = polygonPoints[polygonPoints.length - 1];
-            if (isShiftPressed) {
-                if (Math.abs(currX - last.x) > Math.abs(currY - last.y)) currY = last.y;
-                else currX = last.x;
+        function updatePolygonPreview() {
+            if (polygonLineGroup) {
+                canvas.remove(polygonLineGroup);
             }
-            maskCtx.beginPath();
-            maskCtx.moveTo(first.x, first.y);
-            polygonPoints.forEach(p => maskCtx.lineTo(p.x, p.y));
-            maskCtx.lineTo(currX, currY);
-            maskCtx.lineWidth = 2; maskCtx.strokeStyle = "rgba(0,0,0,0.8)"; maskCtx.stroke();
-            maskCtx.strokeStyle = "white"; maskCtx.lineWidth = 1; maskCtx.stroke();
-            maskCtx.lineWidth = 1; maskCtx.fillStyle = "rgb(0, 100, 255)";
-        }
 
-        maskCanvas.addEventListener("dblclick", () => finishPolygon());
-        document.addEventListener("keydown", e => { if (e.key === "Enter" && currentTool === tools.POLYGON) finishPolygon(); });
+            if (polygonPoints.length === 0) return;
+
+            const lines = [];
+            for (let i = 0; i < polygonPoints.length - 1; i++) {
+                lines.push(new fabric.Line([
+                    polygonPoints[i].x, polygonPoints[i].y,
+                    polygonPoints[i + 1].x, polygonPoints[i + 1].y
+                ], {
+                    stroke: 'white',
+                    strokeWidth: 2,
+                    selectable: false
+                }));
+            }
+
+            polygonPoints.forEach(point => {
+                lines.push(new fabric.Circle({
+                    left: point.x - 3,
+                    top: point.y - 3,
+                    radius: 3,
+                    fill: 'white',
+                    stroke: 'black',
+                    strokeWidth: 1,
+                    selectable: false
+                }));
+            });
+
+            polygonLineGroup = new fabric.Group(lines, {
+                selectable: false
+            });
+
+            canvas.add(polygonLineGroup);
+            canvas.renderAll();
+        }
 
         function finishPolygon() {
             if (polygonPoints.length < 3) return;
-            maskCtx.putImageData(polygonPreviewImage, 0, 0);
-            maskCtx.beginPath();
-            maskCtx.moveTo(polygonPoints[0].x, polygonPoints[0].y);
-            polygonPoints.forEach(p => maskCtx.lineTo(p.x, p.y));
-            maskCtx.closePath();
-            maskCtx.fill();
 
-            // STORE POLYGON JSON
-            let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-            polygonPoints.forEach(p => {
-                if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
-                if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+            if (polygonLineGroup) {
+                canvas.remove(polygonLineGroup);
+                polygonLineGroup = null;
+            }
+
+            const polygon = new fabric.Polygon(polygonPoints, {
+                fill: 'rgba(0, 100, 255, 0.8)',
+                stroke: 'rgb(0, 100, 255)',
+                strokeWidth: 1,
+                selectable: false,
+                opacity: maskOpacity
             });
 
-            recordShape("polygon", {
-                left: minX, top: minY, width: maxX - minX, height: maxY - minY,
-                points: [...polygonPoints]
-            });
+            canvas.add(polygon);
+            canvas.renderAll();
 
             polygonPoints = [];
-            polygonPreviewImage = null;
+            isDrawingPolygon = false;
         }
 
-        /* ------------------------------
-           UNDO / REDO / SAVE
-        ------------------------------ */
-        const undoStack = []; const redoStack = [];
+        function clearPolygon() {
+            if (polygonLineGroup) {
+                canvas.remove(polygonLineGroup);
+                polygonLineGroup = null;
+            }
+            polygonPoints = [];
+            isDrawingPolygon = false;
+            canvas.renderAll();
+        }
 
+        canvas.on('mouse:dblclick', function () {
+            if (currentTool === tools.POLYGON) {
+                finishPolygon();
+            }
+        });
+
+        /* ------------------------------
+           UNDO / REDO
+        ------------------------------ */
         function saveState() {
-            undoStack.push(maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height));
-            if (undoStack.length > 30) undoStack.shift();
-            redoStack.length = 0;
+            const json = JSON.stringify(canvas.toJSON(['selectable']));
+            historyStack.push(json);
+
+            if (historyStack.length > MAX_HISTORY) {
+                historyStack.shift();
+            }
+
+            redoStack = [];
         }
 
         function undo() {
-            if (!undoStack.length) return;
-            redoStack.push(maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height));
-            maskCtx.putImageData(undoStack.pop(), 0, 0);
-            // Undo the JSON data too
-            if (storedShapes.length > 0) storedShapes.pop();
+            if (historyStack.length === 0) return;
+
+            const currentState = JSON.stringify(canvas.toJSON(['selectable']));
+            redoStack.push(currentState);
+
+            const previousState = historyStack.pop();
+            canvas.loadFromJSON(previousState, function () {
+                canvas.renderAll();
+            });
         }
 
         function redo() {
-            if (!redoStack.length) return;
-            undoStack.push(maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height));
-            maskCtx.putImageData(redoStack.pop(), 0, 0);
-            // Note: Redoing JSON is hard without a separate stack. 
-            // For simplicity, we only sync pixel redo here.
+            if (redoStack.length === 0) return;
+
+            const currentState = JSON.stringify(canvas.toJSON(['selectable']));
+            historyStack.push(currentState);
+
+            const nextState = redoStack.pop();
+            canvas.loadFromJSON(nextState, function () {
+                canvas.renderAll();
+            });
+        }
+
+        // Auto-save state after path creation
+        canvas.on('path:created', function (e) {
+            if (currentTool === tools.ERASER) {
+                e.path.globalCompositeOperation = 'destination-out';
+                e.path.selectable = false;
+                e.path.evented = false;
+            }
+            saveState();
+        });
+
+        /* ------------------------------
+           DELETE SELECTED
+        ------------------------------ */
+        function deleteSelected() {
+            const activeObjects = canvas.getActiveObjects();
+            if (activeObjects.length === 0) return;
+
+            saveState();
+
+            activeObjects.forEach(obj => {
+                canvas.remove(obj);
+            });
+
+            canvas.discardActiveObject();
+            canvas.renderAll();
         }
 
         /* ------------------------------
            API CALLS
         ------------------------------ */
         function getMetadata() {
+            const canvasJSON = canvas.toJSON(['selectable']);
+
             return {
                 meta: {
-                    original_width: imageCanvas.width,
-                    original_height: imageCanvas.height,
+                    original_width: originalWidth,
+                    original_height: originalHeight,
                     timestamp: new Date().toISOString()
                 },
-                shapes: storedShapes // <--- SEND ALL SHAPES
+                fabricJSON: canvasJSON,
+                shapes: convertFabricToShapes(canvasJSON)
             };
         }
 
+        function convertFabricToShapes(fabricJSON) {
+            const shapes = [];
+
+            fabricJSON.objects.forEach(obj => {
+                if (obj.type === 'image') return;
+
+                const shape = {
+                    type: obj.type,
+                    left: obj.left || 0,
+                    top: obj.top || 0,
+                    width: obj.width || 0,
+                    height: obj.height || 0,
+                    fill: obj.fill,
+                    stroke: obj.stroke,
+                    strokeWidth: obj.strokeWidth || 0
+                };
+
+                if (obj.type === 'rect') {
+                    shape.points = [
+                        { x: obj.left, y: obj.top },
+                        { x: obj.left + obj.width, y: obj.top },
+                        { x: obj.left + obj.width, y: obj.top + obj.height },
+                        { x: obj.left, y: obj.top + obj.height }
+                    ];
+                } else if (obj.type === 'ellipse') {
+                    shape.radiusX = obj.rx;
+                    shape.radiusY = obj.ry;
+                    shape.center = { x: obj.left + obj.rx, y: obj.top + obj.ry };
+                } else if (obj.type === 'polygon') {
+                    shape.points = obj.points;
+                } else if (obj.type === 'path') {
+                    shape.path = obj.path;
+                }
+
+                shapes.push(shape);
+            });
+
+            return shapes;
+        }
+
         function saveMask(isSubmitting = false) {
-            const oldOpacity = maskCanvas.style.opacity;
-            maskCanvas.style.opacity = "1.0";
-            const dataUrl = maskCanvas.toDataURL("image/png");
-            maskCanvas.style.opacity = oldOpacity;
+            const originalOpacities = [];
+            const originalVisibilities = [];
+            const originalBackgroundColor = canvas.backgroundColor;
+
+            canvas.backgroundColor = 'transparent';
+
+            canvas.getObjects().forEach((obj, index) => {
+                if (obj.type === 'image') {
+                    originalVisibilities[index] = obj.visible;
+                    obj.set('visible', false);
+                } else {
+                    originalOpacities[index] = obj.opacity;
+                }
+            });
+            canvas.renderAll();
+
+            const dataUrl = canvas.toDataURL({
+                format: 'png',
+                quality: 1.0,
+                multiplier: 1,
+                enableRetinaScaling: false
+            });
+
+            canvas.backgroundColor = originalBackgroundColor;
+            canvas.getObjects().forEach((obj, index) => {
+                if (obj.type === 'image') {
+                    obj.set('visible', originalVisibilities[index]);
+                } else {
+                    obj.set('opacity', originalOpacities[index]);
+                }
+            });
+            canvas.renderAll();
 
             const metadata = getMetadata();
 
             return fetch(`/api/segmenter/task/${taskId}/save-mask/`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json", "X-CSRFToken": getCSRFToken() },
-                body: JSON.stringify({ mask: dataUrl, metadata: metadata })
+                headers: {
+                    "Content-Type": "application/json",
+                    "X-CSRFToken": getCSRFToken()
+                },
+                body: JSON.stringify({
+                    mask: dataUrl,
+                    metadata: metadata
+                })
             })
                 .then(res => res.json())
                 .then(data => {
                     if (!isSubmitting) alert("Draft Saved!");
+                })
+                .catch(err => {
+                    console.error("Save error:", err);
+                    alert("Error saving mask!");
                 });
         }
 
         function submitTask() {
             if (!confirm("Finish task?")) return;
+
             saveMask(true).then(() => {
                 fetch(`/api/segmenter/task/${taskId}/submit/`, {
-                    method: "POST", headers: { "Content-Type": "application/json", "X-CSRFToken": getCSRFToken() }
-                }).then(() => {
-                    alert("Submitted!");
-                    window.location.href = "/segmenter/my-tasks/";
-                });
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "X-CSRFToken": getCSRFToken()
+                    }
+                })
+                    .then(() => {
+                        alert("Submitted!");
+                        window.location.href = "/segmenter/my-tasks/";
+                    })
+                    .catch(err => {
+                        console.error("Submit error:", err);
+                        alert("Error submitting task!");
+                    });
             });
         }
 
@@ -484,47 +726,103 @@
         }
 
         /* ------------------------------
-           INIT & UTILS
+           KEYBOARD SHORTCUTS
         ------------------------------ */
-        function setTool(t) { currentTool = t; polygonPoints = []; }
-        function setMaskOpacity(val) { maskCanvas.style.opacity = val; }
-
         document.addEventListener("keydown", e => {
             if (e.target.tagName === "INPUT") return;
-            if (e.key === "b") setTool(tools.BRUSH);
-            if (e.key === "e") setTool(tools.ERASER);
-            if (e.key === "z") undo();
-            if (e.key === "Shift") isShiftPressed = true;
-        });
-        document.addEventListener("keyup", e => { if (e.key === "Shift") isShiftPressed = false; });
 
+            if (e.key === "v") setTool(tools.SELECT);
+            else if (e.key === "b") setTool(tools.BRUSH);
+            else if (e.key === "e") setTool(tools.ERASER);
+            else if (e.key === "p") setTool(tools.PENCIL);
+            else if (e.key === "r") setTool(tools.RECT);
+            else if (e.key === "c") setTool(tools.CIRCLE);
+            else if (e.key === "g") setTool(tools.POLYGON);
+            else if (e.key === "Delete" || e.key === "Backspace") deleteSelected();
+            else if (e.key === "z" && !e.ctrlKey) undo();
+            else if (e.key === "y" && !e.ctrlKey) redo();
+            else if (e.key === "s" && !e.ctrlKey) {
+                e.preventDefault();
+                saveMask();
+            }
+            else if (e.key === "Enter" && currentTool === tools.POLYGON) {
+                finishPolygon();
+            }
+        });
+
+        /* ------------------------------
+           INITIALIZATION
+        ------------------------------ */
         fetch(`/api/segmenter/task/${taskId}/`)
-            .then(res => res.json())
+            .then(res => {
+                if (!res.ok) {
+                    throw new Error(`HTTP error! status: ${res.status}`);
+                }
+                return res.json();
+            })
             .then(task => {
+                console.log("Task data received:", task);
+
+                if (!task.image_path) {
+                    console.error("Task data missing image_path:", task);
+                    alert("Error: Image path not found in task data!");
+                    return;
+                }
+
                 document.getElementById("taskId").innerText = task.task_id;
                 document.getElementById("imageName").innerText = task.image_name;
+
                 const img = new Image();
+                img.crossOrigin = "anonymous";
+
+                img.onerror = function () {
+                    console.error("Failed to load image:", task.image_path);
+                    alert(`Failed to load image: ${task.image_path}\nPlease check if the file exists and is accessible.`);
+                };
+
                 img.src = task.image_path;
+                console.log("Loading image from:", task.image_path);
+
                 img.onload = () => {
+                    console.log("Image loaded successfully:", img.width, "x", img.height);
                     originalWidth = img.width;
                     originalHeight = img.height;
-                    imageCanvas.width = originalWidth; imageCanvas.height = originalHeight;
-                    maskCanvas.width = originalWidth; maskCanvas.height = originalHeight;
+
+                    imageCanvas.width = originalWidth;
+                    imageCanvas.height = originalHeight;
                     imgCtx.drawImage(img, 0, 0);
+
+                    canvas.setWidth(originalWidth);
+                    canvas.setHeight(originalHeight);
+
+                    const fabricCanvasEl = canvas.wrapperEl;
+                    if (fabricCanvasEl) {
+                        fabricCanvasEl.style.position = 'absolute';
+                        fabricCanvasEl.style.left = '0';
+                        fabricCanvasEl.style.top = '0';
+                    }
+
                     applyZoom(1.0);
-                    loadAIMask();
+
+                    setTool(tools.BRUSH);
+
+                    // Load AI mask if available
+                    // loadAIMask();
                 };
+
                 if (task.status === 'REJECTED' && task.feedback) {
                     const msg = `⚠️ REJECTED: ${task.feedback}`;
-                    alert(msg); // Or display it in a red box on the UI
+                    alert(msg);
 
-                    // Optional: Create a visual div
                     const div = document.createElement("div");
                     div.style = "background: #ffebee; color: #c62828; padding: 10px; margin-bottom: 10px; border: 1px solid #ef9a9a; border-radius: 4px;";
                     div.innerText = msg;
                     document.querySelector(".toolbar").prepend(div);
                 }
-
+            })
+            .catch(err => {
+                console.error("Error loading task:", err);
+                alert(`Error loading task: ${err.message}\n\nPlease check:\n1. Are you logged in?\n2. Does task ID ${taskId} exist?\n3. Check browser console for details.`);
             });
 
         function loadAIMask() {
@@ -532,9 +830,23 @@
                 .then(res => res.json())
                 .then(data => {
                     if (!data.mask) return;
-                    const m = new Image();
-                    m.src = data.mask;
-                    m.onload = () => maskCtx.drawImage(m, 0, 0);
+
+                    fabric.Image.fromURL(data.mask, function (img) {
+                        img.set({
+                            left: 0,
+                            top: 0,
+                            selectable: false,
+                            opacity: maskOpacity
+                        });
+                        canvas.add(img);
+                        canvas.sendToBack(img);
+                        canvas.renderAll();
+
+                        saveState();
+                    });
+                })
+                .catch(err => {
+                    console.error("Error loading AI mask:", err);
                 });
         }
     </script>
