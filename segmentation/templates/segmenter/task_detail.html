@@ -879,20 +879,42 @@
                     canvas.setWidth(originalWidth);
                     canvas.setHeight(originalHeight);
 
-                    const fabricCanvasEl = canvas.wrapperEl;
-                    if (fabricCanvasEl) {
-                        fabricCanvasEl.style.position = 'absolute';
-                        fabricCanvasEl.style.left = '0';
-                        fabricCanvasEl.style.top = '0';
+                    applyZoom(1.0);
+                    setTool(tools.BRUSH);
+                    // loadAIMask();
+
+                    /* ===============================
+                        🔥 LOAD EXISTING MASK HERE
+                    =============================== */
+                    if (task.mask_path) {
+                        fabric.Image.fromURL(
+                        task.mask_path,
+                        (maskImg) => {
+                            maskImg.set({
+                            left: 0,
+                            top: 0,
+                            selectable: false,
+                            evented: false,
+                            opacity: maskOpacity
+                            });
+
+                            // Match mask size to image
+                            maskImg.scaleX = originalWidth / maskImg.width;
+                            maskImg.scaleY = originalHeight / maskImg.height;
+
+                            canvas.add(maskImg);
+                            canvas.sendToBack(maskImg);
+                            canvas.renderAll();
+
+                            console.log("✅ Existing mask loaded");
+                        },
+                        { crossOrigin: "anonymous" }
+                        );
                     }
 
-                    applyZoom(1.0);
+                  
+                    };
 
-                    setTool(tools.BRUSH);
-
-                    // Load AI mask if available
-                    loadAIMask();
-                };
 
                 if (task.status === 'REJECTED' && task.feedback) {
                     const msg = `⚠️ REJECTED: ${task.feedback}`;

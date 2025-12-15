@@ -20,7 +20,7 @@ class QADashboardAPIView(APIView):
 
     def get(self, request):
         tasks = SegmentationTask.objects.filter(
-            status='SUBMITTED'
+            status='QA_REVIEW'
         ).select_related('image', 'assigned_to').order_by('-priority', 'updated_at')
 
         data = []
@@ -143,11 +143,11 @@ class QADecisionAPIView(APIView):
             decision_enum = 'APPROVED'
             task.status = 'COMPLETED'
             task.feedback = "" 
-            task.end_time = end_time # Update Task Completion Time
+            task.end_time = end_time 
             
         elif action == 'reject':
             decision_enum = 'REJECT_EDIT'
-            task.status = 'REJECTED'
+            task.status = 'QC_REVIEW'
             task.feedback = comments
             # Do NOT set task.end_time because it needs to be redone
 

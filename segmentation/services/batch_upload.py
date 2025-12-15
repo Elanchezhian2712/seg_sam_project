@@ -14,6 +14,8 @@ import time
 from django.utils import timezone
 from segmentation.models import Batch
 from segmentation.models import Dataset
+from django.db import transaction
+from django.db.models import F
 
 # Allowed image formats
 ALLOWED_EXTENSIONS = ('.jpg', '.jpeg', '.png')
@@ -213,31 +215,79 @@ def save_images_to_dataset(temp_dir, project, dataset):
         "duplicates": duplicate_count,
         "failed": failed_images
     }
-
-def create_segmentation_tasks(images, priority='MEDIUM'):
+def create_segmentation_tasks(*, images, project, priority='MEDIUM'):
     """
-    Create segmentation tasks for given images.
+    Create and assign segmentation tasks for images.
 
-    Args:
-        images: QuerySet or list of Image objects
-        priority: Task priority
-
-    Returns:
-        int: number of tasks created
+    RULES:
+    - segmenter is mandatory
+    - assigned_to starts as segmenter
+    - status starts as ASSIGNED
     """
 
     tasks_created = 0
+    unassigned_images = []
 
-    for image in images:
-        SegmentationTask.objects.create(
-            image=image,
-            status='PENDING',
-            priority=priority
+    with transaction.atomic():
+
+        # --------------------------------------------------
+        # 1. Fetch available segmenters WITH LOCK
+        # --------------------------------------------------
+        segmenters = list(
+            ProjectEmployeeMapping.objects
+            .select_for_update()
+            .filter(
+                project=project,
+                role_in_project='SEGMENTER',
+                is_available=True
+            )
+            .exclude(current_workload__gte=F('capacity'))
+            .order_by('current_workload')
         )
-        tasks_created += 1
 
-    return tasks_created
+        if not segmenters:
+            raise Exception("No available segmenters to create tasks")
 
+        seg_count = len(segmenters)
+        seg_index = 0
+
+        # --------------------------------------------------
+        # 2. Create tasks
+        # --------------------------------------------------
+        for image in images:
+            assigned = False
+
+            for _ in range(seg_count):
+                seg = segmenters[seg_index]
+
+                if seg.current_workload < seg.capacity:
+                    SegmentationTask.objects.create(
+                        image=image,
+                        segmenter=seg.user,      # 🔒 permanent owner
+                        assigned_to=seg.user,    # 👷 current worker
+                        status='ASSIGNED',
+                        priority=priority
+                    )
+
+                    seg.current_workload += 1
+                    seg.save(update_fields=['current_workload'])
+
+                    tasks_created += 1
+                    assigned = True
+
+                    seg_index = (seg_index + 1) % seg_count
+                    break
+
+                seg_index = (seg_index + 1) % seg_count
+
+            if not assigned:
+                unassigned_images.append(image.id)
+
+    return {
+        "tasks_created": tasks_created,
+        "unassigned_images": unassigned_images,
+        "unassigned_count": len(unassigned_images)
+    }
 
 def auto_assign_tasks(project, tasks):
     """
@@ -309,7 +359,6 @@ def auto_assign_tasks(project, tasks):
         "unassigned_task_ids": unassigned_tasks
     }
 
-
 def process_batch_upload(
     *,
     zip_file,
@@ -320,10 +369,10 @@ def process_batch_upload(
     """
     COMPLETE BATCH UPLOAD PIPELINE
 
-    Design (LOCKED):
-    - User uploads ZIP only
-    - Dataset is auto-created (hidden)
+    LOCKED DESIGN:
     - 1 ZIP = 1 Dataset = 1 Batch
+    - Tasks are CREATED + ASSIGNED in one step
+    - segmenter is mandatory
     """
 
     start_time = time.time()
@@ -337,7 +386,6 @@ def process_batch_upload(
     # 2. VALIDATE ZIP
     # --------------------------------------------------
     is_valid, validation_result = validate_zip_file(zip_file)
-
     if not is_valid:
         return {
             "status": "failed",
@@ -345,33 +393,31 @@ def process_batch_upload(
         }
 
     # --------------------------------------------------
-    # 3. AUTO-CREATE DATASET (SYSTEM ONLY)
+    # 3. CREATE DATASET (SYSTEM OWNED)
     # --------------------------------------------------
-    dataset_code = batch_id
-
     dataset_storage_path = os.path.join(
         settings.MEDIA_ROOT,
         'projects',
         project.code,
         'datasets',
-        dataset_code
+        batch_id
     )
 
     dataset = Dataset.objects.create(
         project=project,
-        name=f"Dataset {dataset_code}",
-        code=dataset_code,
+        name=f"Dataset {batch_id}",
+        code=batch_id,
         status='ACTIVE',
         storage_path=dataset_storage_path,
         created_by=uploaded_by
     )
 
     # --------------------------------------------------
-    # 4. CREATE BATCH (DATASET IS REQUIRED)
+    # 4. CREATE BATCH
     # --------------------------------------------------
     batch = Batch.objects.create(
         project=project,
-        dataset=dataset,                 # ✅ NEVER NULL
+        dataset=dataset,
         batch_id=batch_id,
         uploaded_by=uploaded_by,
         original_zip_path=zip_file.name,
@@ -380,7 +426,7 @@ def process_batch_upload(
     )
 
     # --------------------------------------------------
-    # 5. EXTRACT ZIP TO TEMP
+    # 5. EXTRACT ZIP
     # --------------------------------------------------
     temp_dir = extract_zip_to_temp(
         zip_file=zip_file,
@@ -388,7 +434,7 @@ def process_batch_upload(
     )
 
     # --------------------------------------------------
-    # 6. SAVE IMAGES + CREATE IMAGE RECORDS
+    # 6. SAVE IMAGES
     # --------------------------------------------------
     image_result = save_images_to_dataset(
         temp_dir=temp_dir,
@@ -401,55 +447,42 @@ def process_batch_upload(
     batch.save(update_fields=['images_extracted', 'images_failed'])
 
     # --------------------------------------------------
-    # 7. CREATE SEGMENTATION TASKS
+    # 7. CREATE + ASSIGN TASKS (SINGLE SOURCE OF TRUTH)
     # --------------------------------------------------
     images = Image.objects.filter(dataset=dataset)
 
-    total_tasks = create_segmentation_tasks(
+    task_result = create_segmentation_tasks(
         images=images,
+        project=project,
         priority=priority
     )
 
-    batch.total_tasks_created = total_tasks
-    batch.save(update_fields=['total_tasks_created'])
+    batch.total_tasks_created = task_result["tasks_created"]
+    batch.assigned_tasks = task_result["tasks_created"]
+    batch.unassigned_tasks = task_result["unassigned_count"]
+
+    batch.save(update_fields=[
+        'total_tasks_created',
+        'assigned_tasks',
+        'unassigned_tasks'
+    ])
 
     # --------------------------------------------------
-    # 8. AUTO-ASSIGN TASKS
-    # --------------------------------------------------
-    tasks = SegmentationTask.objects.filter(
-        image__dataset=dataset,
-        status='PENDING'
-    )
-
-    assignment_result = auto_assign_tasks(
-        project=project,
-        tasks=tasks
-    )
-
-    batch.assigned_tasks = assignment_result.get("assigned", 0)
-    batch.unassigned_tasks = assignment_result.get("unassigned", 0)
-
-    # --------------------------------------------------
-    # 9. FINALIZE BATCH
+    # 8. FINALIZE BATCH
     # --------------------------------------------------
     batch.status = 'COMPLETED'
     batch.completed_at = timezone.now()
-    batch.save(update_fields=[
-        'assigned_tasks',
-        'unassigned_tasks',
-        'status',
-        'completed_at'
-    ])
+    batch.save(update_fields=['status', 'completed_at'])
 
     end_time = time.time()
 
     # --------------------------------------------------
-    # 10. RESPONSE (MATCHES YOUR REQUIREMENT)
+    # 9. RESPONSE
     # --------------------------------------------------
     return {
         "batch_id": batch.batch_id,
         "project_id": project.id,
-        "dataset_code": dataset.code,   # INTERNAL ONLY
+        "dataset_code": dataset.code,
         "total_images": batch.total_images,
         "successfully_extracted": batch.images_extracted,
         "failed_count": batch.images_failed,

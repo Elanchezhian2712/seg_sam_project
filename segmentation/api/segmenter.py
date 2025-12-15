@@ -19,8 +19,8 @@ class MyTasksAPIView(APIView):
     def get(self, request):
         tasks = SegmentationTask.objects.filter(
             assigned_to=request.user,
-            status__in=['ASSIGNED', 'IN_PROGRESS']
-        ).select_related('image').order_by('priority', 'created_at')
+            status__in=['ASSIGNED', 'IN_PROGRESS', 'QC_REVIEW']
+        ).select_related('image').order_by('-created_at')
 
         data = []
         for task in tasks:
@@ -40,20 +40,36 @@ class TaskDetailAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, task_id):
-        task = get_object_or_404(SegmentationTask, id=task_id, assigned_to=request.user)
+        task = get_object_or_404(SegmentationTask, id=task_id)
 
-        if task.status == 'ASSIGNED' and task.start_time is None:
+        # Correct authorization
+        if task.assigned_to != request.user and task.segmenter != request.user:
+            return Response(
+                {"detail": "You are not allowed to access this task"},
+                status=403
+            )
+
+        # Restart work if rejected
+        if task.status == 'QC_REVIEW':
+            task.start_time = timezone.now()
+            task.end_time = None
+            task.total_duration = None
+            task.status = 'IN_PROGRESS'
+            task.save(update_fields=[
+                'start_time',
+                'end_time',
+                'total_duration',
+                'status',
+                'updated_at'
+            ])
+
+
+        elif task.status == 'ASSIGNED' and task.start_time is None:
             task.start_time = timezone.now()
             task.status = 'IN_PROGRESS'
             task.save(update_fields=['start_time', 'status', 'updated_at'])
 
-        mask_url = None
-        if task.mask_path:
-            if settings.MEDIA_ROOT in task.mask_path:
-                rel_path = task.mask_path.replace(settings.MEDIA_ROOT, "")
-                mask_url = settings.MEDIA_URL.rstrip('/') + rel_path.replace("\\", "/")
-            else:
-                mask_url = media_path_to_url(task.mask_path)
+        mask_url = media_path_to_url(task.mask_path) if task.mask_path else None
 
         metadata_content = {}
         if task.metadata_path and os.path.exists(task.metadata_path):
@@ -61,7 +77,7 @@ class TaskDetailAPIView(APIView):
                 with open(task.metadata_path, 'r') as f:
                     metadata_content = json.load(f)
             except Exception:
-                metadata_content = {}
+                pass
 
         return Response({
             "task_id": task.id,
@@ -69,9 +85,9 @@ class TaskDetailAPIView(APIView):
             "image_name": task.image.file_name,
             "image_path": media_path_to_url(task.image.file_path),
             "mask_path": mask_url,
-            "metadata": metadata_content, 
+            "metadata": metadata_content,
             "status": task.status,
             "priority": task.priority,
-            "start_time": task.start_time, 
+            "start_time": task.start_time,
             "feedback": task.feedback
         })

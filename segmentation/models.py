@@ -1,3 +1,4 @@
+from datetime import timezone
 from django.conf import settings
 from django.db import models
 
@@ -144,12 +145,11 @@ class Image(models.Model):
 
 class SegmentationTask(models.Model):
     TASK_STATUS_CHOICES = [
-        ('PENDING', 'Pending'),
         ('ASSIGNED', 'Assigned'),
         ('IN_PROGRESS', 'In Progress'),
-        ('SUBMITTED', 'Submitted'),
+        ('QC_REVIEW', 'QC Review'),
+        ('QA_REVIEW', 'QA Review'),
         ('COMPLETED', 'Completed'),
-        ('REJECTED', 'Rejected'),
     ]
 
     PRIORITY_CHOICES = [
@@ -189,6 +189,15 @@ class SegmentationTask(models.Model):
     start_time = models.DateTimeField(null=True, blank=True)
     end_time = models.DateTimeField(null=True, blank=True)
     total_duration = models.DurationField(null=True, blank=True)
+
+    segmenter = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name='owned_segmentation_tasks',
+        null=False,
+        blank=False
+    )
+
 
     feedback = models.TextField(
         null=True, 
@@ -233,8 +242,7 @@ class SegmentationTask(models.Model):
         return f"Task #{self.id} - {self.image.file_name}"
 
 
-from django.conf import settings
-from django.db import models
+
 
 
 class ProjectEmployeeMapping(models.Model):
@@ -415,7 +423,7 @@ class TaskReview(models.Model):
     ]
 
     task = models.ForeignKey(
-        'segmentation.SegmentationTask', # String reference to avoid circular imports
+        'segmentation.SegmentationTask',
         on_delete=models.CASCADE,
         related_name='reviews'
     )
