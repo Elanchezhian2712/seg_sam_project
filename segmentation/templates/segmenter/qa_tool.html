@@ -4,6 +4,9 @@
 <head>
     <title>QA Audit Tool</title>
     <meta charset="UTF-8" />
+    <!-- Fabric.js Library -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.0/fabric.min.js"></script>
+
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -14,7 +17,6 @@
             flex-direction: column;
         }
 
-        /* Toolbar Styling */
         .toolbar {
             margin-bottom: 10px;
             padding: 10px;
@@ -34,10 +36,14 @@
             padding-right: 20px;
         }
 
+        .tool-group:last-child {
+            border-right: none;
+        }
+
         button {
             cursor: pointer;
             padding: 6px 12px;
-            margin-right: 4px;
+            margin: 2px;
             border: 1px solid #999;
             border-radius: 3px;
             background: #fff;
@@ -45,6 +51,11 @@
 
         button:hover {
             background: #e0e0e0;
+        }
+
+        button.active {
+            background-color: #4CAF50;
+            color: white;
         }
 
         .btn-approve {
@@ -97,10 +108,23 @@
         #canvasWrapper {
             position: relative;
             box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
+            display: inline-block;
         }
 
-        canvas {
+        #imageCanvas {
             display: block;
+        }
+
+        #fabricCanvas {
+            position: absolute;
+            left: 0;
+            top: 0;
+        }
+
+        .canvas-container {
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
         }
 
         #rejectModal {
@@ -129,33 +153,55 @@
             margin: 10px 0;
             padding: 5px;
         }
+
+        .info-bar {
+            font-size: 0.85em;
+            color: #666;
+            margin-top: 5px;
+        }
     </style>
 </head>
 
 <body>
 
     <div class="toolbar">
+        <!-- TOOLS -->
         <div class="tool-group">
-            <button onclick="setTool('brush')">🖌 Brush (B)</button>
-            <button onclick="setTool('eraser')">🧽 Eraser (E)</button>
-            <button onclick="setTool('pencil')">✏️ Pencil (P)</button>
-            <button onclick="setTool('rect')">⬛ Rect (R)</button>
-            <button onclick="setTool('circle')">⚪ Circle (C)</button>
-            <button onclick="setTool('polygon')">🔺 Polygon (G)</button>
+            <button id="btn-select" onclick="setTool('select')">👆 Select (V)</button>
+            <button id="btn-brush" onclick="setTool('brush')">🖌 Brush (B)</button>
+            <button id="btn-eraser" onclick="setTool('eraser')">🧽 Eraser (E)</button>
+            <button id="btn-pencil" onclick="setTool('pencil')">✏️ Pencil (P)</button>
+            <button id="btn-rect" onclick="setTool('rect')">⬛ Rect (R)</button>
+            <button id="btn-circle" onclick="setTool('circle')">⚪ Circle (C)</button>
+            <button id="btn-polygon" onclick="setTool('polygon')">🔺 Polygon (G)</button>
         </div>
 
+        <!-- ACTIONS -->
         <div class="tool-group">
+            <button onclick="deleteSelected()" id="btn-delete">🗑️ Delete (Del)</button>
             <button onclick="undo()">↩ Undo (Z)</button>
             <button onclick="redo()">↪ Redo (Y)</button>
+        </div>
+
+        <!-- ZOOM & OPACITY -->
+        <div class="tool-group">
+            <strong>Zoom:</strong>
             <button onclick="changeZoom(0.1)">➕</button>
             <button onclick="changeZoom(-0.1)">➖</button>
             <button onclick="resetZoom()">Fit</button>
-            <input type="range" min="0" max="1" step="0.1" value="0.6" oninput="setMaskOpacity(this.value)"
-                style="vertical-align:middle; width:60px" title="Opacity">
-            <input type="range" min="1" max="50" value="10" oninput="brushSize=this.value"
-                style="vertical-align:middle; width:60px" title="Brush Size">
+            <span id="zoomDisplay">100%</span>
         </div>
 
+        <div class="tool-group">
+            Opacity: <input type="range" min="0.0" max="1.0" step="0.1" value="0.5" id="opacitySlider"
+                oninput="setMaskOpacity(this.value)" style="vertical-align: middle;">
+            &nbsp;
+            Brush: <input type="range" min="1" max="50" value="10" id="brushSlider" oninput="setBrushSize(this.value)"
+                style="vertical-align: middle;">
+            <span id="brushSizeDisplay">10px</span>
+        </div>
+
+        <!-- QA ACTIONS -->
         <div>
             <button class="btn-save" onclick="saveDraft()">💾 Save Draft (S)</button>
             <button class="btn-reject" onclick="openRejectModal()">❌ Reject</button>
@@ -163,18 +209,24 @@
         </div>
     </div>
 
+    <div class="info-bar" style="padding: 0 10px; margin-bottom: 10px;">
+        Task: <span id="taskId">...</span> | Image: <span id="imageName">...</span> | Status: <span id="taskStatus">...</span>
+    </div>
+
+    <!-- MAIN WORKSPACE -->
     <div id="canvasContainer">
         <div id="canvasWrapper">
             <canvas id="imageCanvas"></canvas>
-            <canvas id="maskCanvas" style="position:absolute; left:0; top:0; opacity: 0.6;"></canvas>
+            <canvas id="fabricCanvas"></canvas>
         </div>
     </div>
 
+    <!-- REJECT MODAL -->
     <div id="rejectModal">
         <div class="modal-content">
             <h3>Reject Task</h3>
             <p>Reason:</p>
-            <textarea id="rejectComments"></textarea>
+            <textarea id="rejectComments" placeholder="Describe why this task is being rejected..."></textarea>
             <div style="text-align: right;">
                 <button onclick="closeRejectModal()" style="padding: 8px;">Cancel</button>
                 <button class="btn-reject" onclick="submitDecision('reject')">Confirm Reject</button>
@@ -183,282 +235,753 @@
     </div>
 
     <script>
-        // --- 1. SETUP ---
+        /* ------------------------------
+           BASIC SETUP
+        ------------------------------ */
         const parts = window.location.pathname.split("/").filter(Boolean);
         const taskId = parts[parts.length - 1];
         const qaStartTime = new Date().toISOString();
 
-        const canvasWrapper = document.getElementById("canvasWrapper");
+        // Image canvas (background)
         const imageCanvas = document.getElementById("imageCanvas");
-        const maskCanvas = document.getElementById("maskCanvas");
         const imgCtx = imageCanvas.getContext("2d");
-        const maskCtx = maskCanvas.getContext("2d", { willReadFrequently: true });
 
-        // QA Color (Greenish to show edits)
-        maskCtx.fillStyle = "rgb(0, 200, 0)";
-        maskCtx.strokeStyle = "rgb(0, 200, 0)";
+        // Fabric.js canvas (for annotations)
+        const canvas = new fabric.Canvas('fabricCanvas', {
+            isDrawingMode: false,
+            selection: true,
+            backgroundColor: 'transparent',
+            preserveObjectStacking: true
+        });
 
-        let storedShapes = [];
-        let currentPath = [];
-        let currentZoom = 1.0;
-        let originalWidth = 0, originalHeight = 0;
+        /* ------------------------------
+           STATE MANAGEMENT
+        ------------------------------ */
+        const tools = {
+            SELECT: "select",
+            BRUSH: "brush",
+            ERASER: "eraser",
+            PENCIL: "pencil",
+            RECT: "rect",
+            CIRCLE: "circle",
+            POLYGON: "polygon"
+        };
 
-        const tools = { BRUSH: "brush", ERASER: "eraser", PENCIL: "pencil", RECT: "rect", CIRCLE: "circle", POLYGON: "polygon" };
-        let currentTool = tools.BRUSH;
+        let currentTool = tools.SELECT;
         let brushSize = 10;
-        let isDrawing = false;
-        let startX = 0, startY = 0;
+        let maskOpacity = 0.5;
+        let currentZoom = 1.0;
+        let originalWidth = 0;
+        let originalHeight = 0;
+
+        // Undo/Redo stacks
+        let historyStack = [];
+        let redoStack = [];
+        const MAX_HISTORY = 30;
+
+        // Polygon state
         let polygonPoints = [];
-        let polygonPreviewImage = null;
-        let isShiftPressed = false;
-        const SNAP_DISTANCE = 10;
-        const undoStack = [];
-        const redoStack = [];
+        let polygonLineGroup = null;
+        let isDrawingPolygon = false;
 
-        // --- 2. LOAD DATA ---
-        fetch(`/api/segmenter/task/${taskId}/`)
-            .then(res => res.json())
-            .then(task => {
-                const img = new Image();
-                img.src = task.image_path;
-                img.onload = () => {
-                    originalWidth = img.width; originalHeight = img.height;
-                    imageCanvas.width = maskCanvas.width = originalWidth;
-                    imageCanvas.height = maskCanvas.height = originalHeight;
-                    imgCtx.drawImage(img, 0, 0);
-                    applyZoom(1.0);
+        // Shape drawing state
+        let isDrawingShape = false;
+        let shapeStartPoint = null;
+        let currentShape = null;
 
-                    // A. LOAD EXISTING MASK IMAGE
-                    if (task.mask_path) {
-                        const m = new Image();
-                        m.src = task.mask_path + "?t=" + new Date().getTime();
-                        m.crossOrigin = "Anonymous";
-                        m.onload = () => {
-                            maskCtx.drawImage(m, 0, 0);
-                            saveState();
-                        };
+        /* ------------------------------
+           TOOL SELECTION
+        ------------------------------ */
+        function setTool(tool) {
+            currentTool = tool;
+
+            document.querySelectorAll('.tool-group button').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            document.getElementById(`btn-${tool}`)?.classList.add('active');
+
+            if (tool !== tools.POLYGON) {
+                clearPolygon();
+            }
+
+            canvas.isDrawingMode = (tool === tools.BRUSH || tool === tools.PENCIL || tool === tools.ERASER);
+
+            if (tool === tools.SELECT) {
+                canvas.selection = true;
+                canvas.getObjects().forEach(obj => {
+                    const isEraserPath = obj.globalCompositeOperation === 'destination-out';
+                    if (!isEraserPath && obj.type !== 'image') {
+                        obj.selectable = true;
+                        obj.evented = true;
+                        obj.hasControls = true;
+                        obj.hasBorders = true;
+                        obj.lockMovementX = false;
+                        obj.lockMovementY = false;
                     } else {
-                        saveState();
+                        obj.selectable = false;
+                        obj.evented = false;
                     }
+                });
+            } else if (tool === tools.BRUSH || tool === tools.PENCIL) {
+                canvas.selection = false;
+                canvas.freeDrawingBrush = new fabric.PencilBrush(canvas);
+                canvas.freeDrawingBrush.color = 'rgba(0, 200, 0, 0.8)'; // QA color: green
+                canvas.freeDrawingBrush.width = tool === tools.PENCIL ? 1 : brushSize;
+                canvas.freeDrawingBrush.globalCompositeOperation = 'source-over';
+                canvas.discardActiveObject();
+                canvas.getObjects().forEach(obj => {
+                    obj.selectable = false;
+                    obj.evented = false;
+                });
+            } else if (tool === tools.ERASER) {
+                canvas.selection = false;
+                canvas.freeDrawingBrush = new fabric.PencilBrush(canvas);
+                canvas.freeDrawingBrush.width = brushSize;
+                canvas.freeDrawingBrush.color = '#FFFFFF';
+                canvas.freeDrawingBrush.globalCompositeOperation = 'destination-out';
+                canvas.discardActiveObject();
+                canvas.getObjects().forEach(obj => {
+                    obj.selectable = false;
+                    obj.evented = false;
+                });
+            } else { // RECT, CIRCLE, POLYGON modes
+                canvas.selection = false;
+                canvas.discardActiveObject();
+                canvas.getObjects().forEach(obj => {
+                    obj.selectable = false;
+                    obj.evented = false;
+                });
+            }
 
-                    // B. LOAD EXISTING SHAPES (Fix for Data Loss)
-                    if (task.metadata && task.metadata.shapes) {
-                        storedShapes = task.metadata.shapes;
-                        console.log("Loaded existing shapes:", storedShapes.length);
-                    }
-                };
+            canvas.renderAll();
+        }
+
+        /* ------------------------------
+           BRUSH SIZE & OPACITY
+        ------------------------------ */
+        function setBrushSize(size) {
+            brushSize = parseInt(size);
+            document.getElementById('brushSizeDisplay').innerText = brushSize + 'px';
+
+            if (canvas.freeDrawingBrush) {
+                canvas.freeDrawingBrush.width = brushSize;
+            }
+        }
+
+        function setMaskOpacity(value) {
+            maskOpacity = parseFloat(value);
+            canvas.getObjects().forEach(obj => {
+                if (obj.type !== 'image') {
+                    obj.set('opacity', maskOpacity);
+                }
+            });
+            canvas.renderAll();
+        }
+
+        /* ------------------------------
+           ZOOM FUNCTIONS
+        ------------------------------ */
+        function changeZoom(delta) {
+            const newZoom = Math.max(0.1, Math.min(5.0, currentZoom + delta));
+            applyZoom(newZoom);
+        }
+
+        function resetZoom() {
+            applyZoom(1.0);
+        }
+
+        function applyZoom(zoomLevel) {
+            currentZoom = zoomLevel;
+            document.getElementById("zoomDisplay").innerText = Math.round(currentZoom * 100) + "%";
+
+            const newWidth = originalWidth * currentZoom;
+            const newHeight = originalHeight * currentZoom;
+
+            canvas.setZoom(currentZoom);
+            canvas.setWidth(newWidth);
+            canvas.setHeight(newWidth);
+
+            imageCanvas.style.width = newWidth + 'px';
+            imageCanvas.style.height = newHeight + 'px';
+
+            const canvasWrapper = document.getElementById('canvasWrapper');
+            canvasWrapper.style.width = newWidth + 'px';
+            canvasWrapper.style.height = newHeight + 'px';
+
+            canvas.renderAll();
+        }
+
+        canvas.on('mouse:wheel', function (opt) {
+            const delta = opt.e.deltaY;
+            let zoom = canvas.getZoom();
+            zoom *= 0.999 ** delta;
+
+            if (zoom > 5) zoom = 5;
+            if (zoom < 0.1) zoom = 0.1;
+
+            applyZoom(zoom);
+
+            opt.e.preventDefault();
+            opt.e.stopPropagation();
+        });
+
+        /* ------------------------------
+           SHAPE DRAWING (RECT, CIRCLE)
+        ------------------------------ */
+        let shapeDrawingMouseDown, shapeDrawingMouseMove, shapeDrawingMouseUp;
+
+        shapeDrawingMouseDown = function (options) {
+            if (currentTool === tools.SELECT) {
+                return;
+            }
+            
+            if (currentTool === tools.POLYGON) {
+                handlePolygonClick(options);
+                return;
+            }
+
+            if (currentTool === tools.RECT || currentTool === tools.CIRCLE) {
+                isDrawingShape = true;
+                const pointer = canvas.getPointer(options.e);
+                shapeStartPoint = pointer;
+
+                saveState();
+
+                if (currentTool === tools.RECT) {
+                    currentShape = new fabric.Rect({
+                        left: pointer.x,
+                        top: pointer.y,
+                        width: 0,
+                        height: 0,
+                        fill: 'rgba(0, 200, 0, 0.8)', // QA color: green
+                        stroke: 'rgb(0, 200, 0)',
+                        strokeWidth: 1,
+                        selectable: false,
+                        evented: false,
+                        opacity: maskOpacity
+                    });
+                } else if (currentTool === tools.CIRCLE) {
+                    currentShape = new fabric.Ellipse({
+                        left: pointer.x,
+                        top: pointer.y,
+                        rx: 0,
+                        ry: 0,
+                        fill: 'rgba(0, 200, 0, 0.8)', // QA color: green
+                        stroke: 'rgb(0, 200, 0)',
+                        strokeWidth: 1,
+                        selectable: false,
+                        evented: false,
+                        opacity: maskOpacity
+                    });
+                }
+
+                canvas.add(currentShape);
+                canvas.renderAll();
+            }
+        };
+
+        shapeDrawingMouseMove = function (options) {
+            if (currentTool === tools.SELECT) {
+                return;
+            }
+            
+            if (!isDrawingShape || !currentShape) return;
+
+            const pointer = canvas.getPointer(options.e);
+
+            if (currentTool === tools.RECT) {
+                const width = pointer.x - shapeStartPoint.x;
+                const height = pointer.y - shapeStartPoint.y;
+
+                currentShape.set({
+                    width: Math.abs(width),
+                    height: Math.abs(height),
+                    left: width > 0 ? shapeStartPoint.x : pointer.x,
+                    top: height > 0 ? shapeStartPoint.y : pointer.y
+                });
+            } else if (currentTool === tools.CIRCLE) {
+                const rx = Math.abs(pointer.x - shapeStartPoint.x) / 2;
+                const ry = Math.abs(pointer.y - shapeStartPoint.y) / 2;
+
+                currentShape.set({
+                    rx: rx,
+                    ry: ry,
+                    left: Math.min(pointer.x, shapeStartPoint.x),
+                    top: Math.min(pointer.y, shapeStartPoint.y)
+                });
+            }
+
+            canvas.renderAll();
+        };
+
+        shapeDrawingMouseUp = function (options) {
+            if (currentTool === tools.SELECT) {
+                return;
+            }
+            
+            if (isDrawingShape && currentShape) {
+                currentShape.set({ 
+                    evented: true,
+                    selectable: true,
+                    hasControls: true,
+                    hasBorders: true
+                });
+                
+                isDrawingShape = false;
+                const finishedShape = currentShape;
+                currentShape = null;
+                shapeStartPoint = null;
+                
+                canvas.renderAll();
+                
+                setTimeout(() => {
+                    setTool(tools.SELECT);
+                    canvas.setActiveObject(finishedShape);
+                    canvas.renderAll();
+                }, 10);
+            }
+        };
+
+        canvas.on('mouse:down', shapeDrawingMouseDown);
+        canvas.on('mouse:move', shapeDrawingMouseMove);
+        canvas.on('mouse:up', shapeDrawingMouseUp);
+
+        /* ------------------------------
+           POLYGON TOOL
+        ------------------------------ */
+        function handlePolygonClick(options) {
+            const pointer = canvas.getPointer(options.e);
+
+            if (polygonPoints.length === 0) {
+                saveState();
+                isDrawingPolygon = true;
+            }
+
+            if (polygonPoints.length >= 3) {
+                const firstPoint = polygonPoints[0];
+                const distance = Math.sqrt(
+                    Math.pow(pointer.x - firstPoint.x, 2) +
+                    Math.pow(pointer.y - firstPoint.y, 2)
+                );
+
+                if (distance < 10) {
+                    finishPolygon();
+                    return;
+                }
+            }
+
+            polygonPoints.push({ x: pointer.x, y: pointer.y });
+            updatePolygonPreview();
+        }
+
+        function updatePolygonPreview() {
+            if (polygonLineGroup) {
+                canvas.remove(polygonLineGroup);
+            }
+
+            if (polygonPoints.length === 0) return;
+
+            const lines = [];
+            for (let i = 0; i < polygonPoints.length - 1; i++) {
+                lines.push(new fabric.Line([
+                    polygonPoints[i].x, polygonPoints[i].y,
+                    polygonPoints[i + 1].x, polygonPoints[i + 1].y
+                ], {
+                    stroke: 'white',
+                    strokeWidth: 2,
+                    selectable: false,
+                    evented: false
+                }));
+            }
+
+            polygonPoints.forEach(point => {
+                lines.push(new fabric.Circle({
+                    left: point.x - 3,
+                    top: point.y - 3,
+                    radius: 3,
+                    fill: 'white',
+                    stroke: 'black',
+                    strokeWidth: 1,
+                    selectable: false,
+                    evented: false
+                }));
             });
 
-        // --- 3. QA ACTIONS ---
-        function saveDraft() { submitDecision('save'); }
-        function openRejectModal() { document.getElementById('rejectModal').style.display = 'block'; }
-        function closeRejectModal() { document.getElementById('rejectModal').style.display = 'none'; }
+            polygonLineGroup = new fabric.Group(lines, {
+                selectable: false,
+                evented: false
+            });
+
+            canvas.add(polygonLineGroup);
+            canvas.renderAll();
+        }
+
+        function finishPolygon() {
+            if (polygonPoints.length < 3) return;
+
+            if (polygonLineGroup) {
+                canvas.remove(polygonLineGroup);
+                polygonLineGroup = null;
+            }
+
+            const polygon = new fabric.Polygon(polygonPoints, {
+                fill: 'rgba(0, 200, 0, 0.8)', // QA color: green
+                stroke: 'rgb(0, 200, 0)',
+                strokeWidth: 1,
+                selectable: true,
+                evented: true,
+                opacity: maskOpacity
+            });
+
+            canvas.add(polygon);
+            canvas.renderAll();
+
+            polygonPoints = [];
+            isDrawingPolygon = false;
+            
+            setTool(tools.SELECT);
+        }
+
+        function clearPolygon() {
+            if (polygonLineGroup) {
+                canvas.remove(polygonLineGroup);
+                polygonLineGroup = null;
+            }
+            polygonPoints = [];
+            isDrawingPolygon = false;
+            canvas.renderAll();
+        }
+
+        canvas.on('mouse:dblclick', function () {
+            if (currentTool === tools.POLYGON) {
+                finishPolygon();
+            }
+        });
+
+        /* ------------------------------
+           UNDO / REDO
+        ------------------------------ */
+        function saveState() {
+            const json = JSON.stringify(canvas.toJSON(['selectable', 'evented', 'globalCompositeOperation']));
+            historyStack.push(json);
+
+            if (historyStack.length > MAX_HISTORY) {
+                historyStack.shift();
+            }
+
+            redoStack = [];
+        }
+
+        function undo() {
+            if (historyStack.length === 0) return;
+
+            const currentState = JSON.stringify(canvas.toJSON(['selectable', 'evented', 'globalCompositeOperation']));
+            redoStack.push(currentState);
+
+            const previousState = historyStack.pop();
+            canvas.loadFromJSON(previousState, function () {
+                canvas.renderAll();
+                setTool(currentTool);
+            });
+        }
+
+        function redo() {
+            if (redoStack.length === 0) return;
+
+            const currentState = JSON.stringify(canvas.toJSON(['selectable', 'evented', 'globalCompositeOperation']));
+            historyStack.push(currentState);
+
+            const nextState = redoStack.pop();
+            canvas.loadFromJSON(nextState, function () {
+                canvas.renderAll();
+                setTool(currentTool);
+            });
+        }
+
+        canvas.on('path:created', function (e) {
+            if (currentTool === tools.ERASER) {
+                e.path.globalCompositeOperation = 'destination-out';
+                e.path.selectable = false;
+                e.path.evented = false;
+            } else {
+                e.path.selectable = true;
+                e.path.evented = true;
+            }
+            saveState();
+        });
+
+        /* ------------------------------
+           DELETE SELECTED
+        ------------------------------ */
+        function deleteSelected() {
+            const activeObjects = canvas.getActiveObjects();
+            if (activeObjects.length === 0) return;
+
+            saveState();
+
+            activeObjects.forEach(obj => {
+                canvas.remove(obj);
+            });
+
+            canvas.discardActiveObject();
+            canvas.renderAll();
+        }
+
+        /* ------------------------------
+           QA DECISION FUNCTIONS
+        ------------------------------ */
+        function openRejectModal() {
+            document.getElementById('rejectModal').style.display = 'block';
+        }
+
+        function closeRejectModal() {
+            document.getElementById('rejectModal').style.display = 'none';
+        }
+
+        function saveDraft() {
+            submitDecision('save');
+        }
+
+        function getMetadata() {
+            const canvasJSON = canvas.toJSON(['selectable', 'evented', 'globalCompositeOperation']);
+            return {
+                meta: {
+                    original_width: originalWidth,
+                    original_height: originalHeight,
+                    timestamp: new Date().toISOString(),
+                    qa_start_time: qaStartTime
+                },
+                fabricJSON: canvasJSON,
+                shapes: convertFabricToShapes(canvasJSON)
+            };
+        }
+
+        function convertFabricToShapes(fabricJSON) {
+            const shapes = [];
+
+            fabricJSON.objects.forEach(obj => {
+                if (obj.type === 'image') return;
+
+                const shape = {
+                    type: obj.type,
+                    left: obj.left || 0,
+                    top: obj.top || 0,
+                    width: obj.width || 0,
+                    height: obj.height || 0,
+                    fill: obj.fill,
+                    stroke: obj.stroke,
+                    strokeWidth: obj.strokeWidth || 0
+                };
+
+                if (obj.type === 'rect') {
+                    shape.points = [
+                        { x: obj.left, y: obj.top },
+                        { x: obj.left + obj.width, y: obj.top },
+                        { x: obj.left + obj.width, y: obj.top + obj.height },
+                        { x: obj.left, y: obj.top + obj.height }
+                    ];
+                } else if (obj.type === 'ellipse') {
+                    shape.radiusX = obj.rx;
+                    shape.radiusY = obj.ry;
+                    shape.center = { x: obj.left + obj.rx, y: obj.top + obj.ry };
+                } else if (obj.type === 'polygon') {
+                    shape.points = obj.points;
+                } else if (obj.type === 'path') {
+                    shape.path = obj.path;
+                }
+
+                shapes.push(shape);
+            });
+
+            return shapes;
+        }
 
         function submitDecision(action) {
             let comments = "";
+            
             if (action === 'reject') {
-                comments = document.getElementById('rejectComments').value;
-                if (!comments) return alert("Comment required");
+                comments = document.getElementById('rejectComments').value.trim();
+                if (!comments) {
+                    alert("Comment required for rejection");
+                    return;
+                }
             } else if (action === 'approve') {
-                if (!confirm("Approve task?")) return;
+                if (!confirm("Approve this task?")) return;
             }
 
-            const oldOpacity = maskCanvas.style.opacity;
-            maskCanvas.style.opacity = "1.0";
-            const dataUrl = maskCanvas.toDataURL("image/png");
-            maskCanvas.style.opacity = oldOpacity;
+            // Export mask
+            const originalOpacities = [];
+            const originalVisibilities = [];
+            const originalBackgroundColor = canvas.backgroundColor;
 
-            const metadata = {
-                meta: {
-                    original_width: originalWidth,
-                    timestamp: new Date().toISOString(),
-                    qa_action: action
-                },
-                shapes: storedShapes
-            };
+            canvas.backgroundColor = 'transparent';
+
+            canvas.getObjects().forEach((obj, index) => {
+                if (obj.type === 'image') {
+                    originalVisibilities[index] = obj.visible;
+                    obj.set('visible', false);
+                } else {
+                    originalOpacities[index] = obj.opacity;
+                    obj.set('opacity', 1.0); // Full opacity for export
+                }
+            });
+            canvas.renderAll();
+
+            const dataUrl = canvas.toDataURL({
+                format: 'png',
+                quality: 1.0,
+                multiplier: 1,
+                enableRetinaScaling: false
+            });
+
+            // Restore
+            canvas.backgroundColor = originalBackgroundColor;
+            canvas.getObjects().forEach((obj, index) => {
+                if (obj.type === 'image') {
+                    obj.set('visible', originalVisibilities[index]);
+                } else {
+                    obj.set('opacity', originalOpacities[index]);
+                }
+            });
+            canvas.renderAll();
+
+            const metadata = getMetadata();
 
             fetch(`/api/qa/task/${taskId}/decision/`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json", "X-CSRFToken": getCSRFToken() },
+                headers: {
+                    "Content-Type": "application/json",
+                    "X-CSRFToken": getCSRFToken()
+                },
                 body: JSON.stringify({
                     action: action,
                     comments: comments,
                     mask: dataUrl,
-                    metadata: metadata,
-                    qa_start_time: qaStartTime
+                    metadata: metadata
                 })
             })
                 .then(res => res.json())
                 .then(data => {
-                    if (action === 'save') alert("Draft Saved!");
-                    else {
-                        alert(data.message);
+                    if (action === 'save') {
+                        alert("Draft Saved!");
+                    } else {
+                        alert(data.message || "Decision submitted!");
                         window.location.href = "/qa/dashboard/";
                     }
                 })
-                .catch(err => alert("Error: " + err));
-        }
-
-        // --- 4. DRAWING & RECORDING LOGIC ---
-
-        // 🔥 FIXED RECORD SHAPE FUNCTION (Matches QC Style)
-        function recordShape(type, data) {
-            const shape = {
-                type: type,
-                left: data.left || 0,
-                top: data.top || 0,
-                width: data.width || 0,
-                height: data.height || 0,
-                // Add standard colors so QA edits look like QC shapes in JSON
-                fill: (type === 'eraser') ? null : "#0064ff80",
-                stroke: (type === 'eraser') ? null : "#0064ff",
-                strokeWidth: 0,
-                points: data.points || [],
-                ...data
-            };
-            storedShapes.push(shape);
-            console.log("Recorded QA Shape:", shape);
-        }
-
-        function getMousePos(e) {
-            const rect = maskCanvas.getBoundingClientRect();
-            const scaleX = maskCanvas.width / rect.width;
-            const scaleY = maskCanvas.height / rect.height;
-            return { x: (e.clientX - rect.left) * scaleX, y: (e.clientY - rect.top) * scaleY };
-        }
-
-        maskCanvas.addEventListener("mousedown", e => {
-            const pos = getMousePos(e);
-            startX = pos.x; startY = pos.y;
-            if (currentTool === tools.POLYGON) { handlePolygonClick(startX, startY); return; }
-            isDrawing = true; saveState();
-            if ([tools.BRUSH, tools.PENCIL, tools.ERASER].includes(currentTool)) currentPath = [{ x: startX, y: startY }];
-        });
-
-        maskCanvas.addEventListener("mousemove", e => {
-            const pos = getMousePos(e);
-            if (currentTool === tools.POLYGON && polygonPoints.length > 0) { drawPolygonPreview(pos.x, pos.y); return; }
-            if (!isDrawing) return;
-            if (currentTool === tools.BRUSH) { maskCtx.beginPath(); maskCtx.arc(pos.x, pos.y, brushSize, 0, Math.PI * 2); maskCtx.fill(); currentPath.push(pos); }
-            else if (currentTool === tools.ERASER) { maskCtx.globalCompositeOperation = "destination-out"; maskCtx.beginPath(); maskCtx.arc(pos.x, pos.y, brushSize, 0, Math.PI * 2); maskCtx.fill(); maskCtx.globalCompositeOperation = "source-over"; }
-            else if (currentTool === tools.PENCIL) { maskCtx.fillRect(Math.floor(pos.x), Math.floor(pos.y), 1, 1); currentPath.push(pos); }
-        });
-
-        maskCanvas.addEventListener("mouseup", e => {
-            if (!isDrawing) return; isDrawing = false;
-            const pos = getMousePos(e);
-
-            // 🔥 UPDATED LOGIC TO CALCULATE POINTS FOR RECT/CIRCLE
-            if (currentTool === tools.RECT) {
-                const w = Math.abs(pos.x - startX);
-                const h = Math.abs(pos.y - startY);
-                const left = Math.min(startX, pos.x);
-                const top = Math.min(startY, pos.y);
-
-                maskCtx.fillRect(left, top, w, h);
-
-                // Calculate 4 corner points
-                const pts = [
-                    { x: left, y: top },
-                    { x: left + w, y: top },
-                    { x: left + w, y: top + h },
-                    { x: left, y: top + h }
-                ];
-                recordShape('rect', { left, top, width: w, height: h, points: pts });
-
-            } else if (currentTool === tools.CIRCLE) {
-                const rx = Math.abs(pos.x - startX) / 2;
-                const ry = Math.abs(pos.y - startY) / 2;
-                const cx = (startX + pos.x) / 2;
-                const cy = (startY + pos.y) / 2;
-
-                maskCtx.beginPath(); maskCtx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2); maskCtx.fill();
-                recordShape('circle', {
-                    left: cx - rx, top: cy - ry, width: rx * 2, height: ry * 2,
-                    radiusX: rx, radiusY: ry, center: { x: cx, y: cy },
-                    points: [] // Circles don't strictly need points, but keeping schema consistent
+                .catch(err => {
+                    console.error("Submit error:", err);
+                    alert("Error submitting decision!");
                 });
-
-            } else if ([tools.BRUSH, tools.PENCIL, tools.ERASER].includes(currentTool)) {
-                // Calculate bbox for brush
-                let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-                currentPath.forEach(p => {
-                    if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
-                    if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
-                });
-                recordShape(currentTool, {
-                    points: [...currentPath],
-                    left: minX, top: minY, width: maxX - minX, height: maxY - minY
-                });
-                currentPath = [];
-            }
-        });
-
-        // --- 5. HELPERS ---
-        function setTool(t) { currentTool = t; polygonPoints = []; }
-        function setMaskOpacity(v) { maskCanvas.style.opacity = v; }
-        function changeZoom(d) { currentZoom = Math.max(0.1, currentZoom + d); applyZoom(currentZoom); }
-        function resetZoom() { currentZoom = 1.0; applyZoom(1.0); }
-        function applyZoom(z) {
-            const w = originalWidth * z, h = originalHeight * z;
-            imageCanvas.style.width = maskCanvas.style.width = canvasWrapper.style.width = w + "px";
-            imageCanvas.style.height = maskCanvas.style.height = canvasWrapper.style.height = h + "px";
         }
-        function getCSRFToken() { return document.cookie.split("; ").find(r => r.startsWith("csrftoken"))?.split("=")[1]; }
 
-        function saveState() { undoStack.push(maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height)); if (undoStack.length > 30) undoStack.shift(); redoStack.length = 0; }
-        function undo() { if (undoStack.length) { redoStack.push(maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height)); maskCtx.putImageData(undoStack.pop(), 0, 0); if (storedShapes.length) storedShapes.pop(); } }
-        function redo() { if (redoStack.length) { undoStack.push(maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height)); maskCtx.putImageData(redoStack.pop(), 0, 0); } }
-
-        function handlePolygonClick(x, y) {
-            if (polygonPoints.length === 0) { saveState(); polygonPreviewImage = maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height); }
-            if (polygonPoints.length > 0 && Math.hypot(x - polygonPoints[0].x, y - polygonPoints[0].y) < SNAP_DISTANCE && polygonPoints.length >= 3) { x = polygonPoints[0].x; y = polygonPoints[0].y; }
-            polygonPoints.push({ x, y });
+        function getCSRFToken() {
+            return document.cookie.split("; ").find(row => row.startsWith("csrftoken"))?.split("=")[1];
         }
-        function drawPolygonPreview(x, y) {
-            maskCtx.putImageData(polygonPreviewImage, 0, 0);
-            const first = polygonPoints[0];
-            if (isShiftPressed) { if (Math.abs(x - polygonPoints[polygonPoints.length - 1].x) > Math.abs(y - polygonPoints[polygonPoints.length - 1].y)) y = polygonPoints[polygonPoints.length - 1].y; else x = polygonPoints[polygonPoints.length - 1].x; }
-            maskCtx.beginPath(); maskCtx.moveTo(first.x, first.y);
-            polygonPoints.forEach(p => maskCtx.lineTo(p.x, p.y)); maskCtx.lineTo(x, y);
-            maskCtx.lineWidth = 2; maskCtx.stroke(); maskCtx.lineWidth = 1;
-        }
-        function finishPolygon() {
-            if (polygonPoints.length < 3) return;
-            maskCtx.putImageData(polygonPreviewImage, 0, 0);
-            maskCtx.beginPath(); maskCtx.moveTo(polygonPoints[0].x, polygonPoints[0].y);
-            polygonPoints.forEach(p => maskCtx.lineTo(p.x, p.y)); maskCtx.closePath(); maskCtx.fill();
 
-            // Calculate BBox
-            let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-            polygonPoints.forEach(p => {
-                if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
-                if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
-            });
-            recordShape('polygon', {
-                left: minX, top: minY, width: maxX - minX, height: maxY - minY,
-                points: [...polygonPoints]
-            });
-            polygonPoints = [];
-        }
-        maskCanvas.addEventListener("dblclick", () => finishPolygon());
-
+        /* ------------------------------
+           KEYBOARD SHORTCUTS
+        ------------------------------ */
         document.addEventListener("keydown", e => {
-            if (e.key === "Shift") isShiftPressed = true;
-            if (e.target.tagName !== "INPUT" && e.target.tagName !== "TEXTAREA") {
-                if (e.key === "b") setTool(tools.BRUSH);
-                if (e.key === "e") setTool(tools.ERASER);
-                if (e.key === "p") setTool(tools.PENCIL);
-                if (e.key === "r") setTool(tools.RECT);
-                if (e.key === "c") setTool(tools.CIRCLE);
-                if (e.key === "g") setTool(tools.POLYGON);
-                if (e.key === "z") undo();
-                if (e.key === "y") redo();
-                if (e.key === "s") saveDraft();
-                if (e.key === "Enter" && currentTool === tools.POLYGON) finishPolygon();
+            if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+
+            if (e.key === "v") setTool(tools.SELECT);
+            else if (e.key === "b") setTool(tools.BRUSH);
+            else if (e.key === "e") setTool(tools.ERASER);
+            else if (e.key === "p") setTool(tools.PENCIL);
+            else if (e.key === "r") setTool(tools.RECT);
+            else if (e.key === "c") setTool(tools.CIRCLE);
+            else if (e.key === "g") setTool(tools.POLYGON);
+            else if (e.key === "Delete" || e.key === "Backspace") deleteSelected();
+            else if (e.key === "z" && !e.ctrlKey) undo();
+            else if (e.key === "y" && !e.ctrlKey) redo();
+            else if (e.key === "s" && !e.ctrlKey) {
+                e.preventDefault();
+                saveDraft();
+            }
+            else if (e.key === "Enter" && currentTool === tools.POLYGON) {
+                finishPolygon();
             }
         });
-        document.addEventListener("keyup", e => { if (e.key === "Shift") isShiftPressed = false; });
+
+        /* ------------------------------
+           INITIALIZATION
+        ------------------------------ */
+        fetch(`/api/segmenter/task/${taskId}/`)
+            .then(res => {
+                if (!res.ok) {
+                    throw new Error(`HTTP error! status: ${res.status}`);
+                }
+                return res.json();
+            })
+            .then(task => {
+                console.log("Task data received:", task);
+
+                if (!task.image_path) {
+                    console.error("Task data missing image_path:", task);
+                    alert("Error: Image path not found in task data!");
+                    return;
+                }
+
+                // Update UI info
+                document.getElementById("taskId").innerText = task.task_id || taskId;
+                document.getElementById("imageName").innerText = task.image_name || "N/A";
+                document.getElementById("taskStatus").innerText = task.status || "N/A";
+
+                const img = new Image();
+                img.crossOrigin = "anonymous";
+
+                img.onerror = function () {
+                    console.error("Failed to load image:", task.image_path);
+                    alert(`Failed to load image: ${task.image_path}`);
+                };
+
+                img.src = task.image_path;
+
+                img.onload = () => {
+                    console.log("Image loaded successfully:", img.width, "x", img.height);
+                    originalWidth = img.width;
+                    originalHeight = img.height;
+
+                    imageCanvas.width = originalWidth;
+                    imageCanvas.height = originalHeight;
+                    imgCtx.drawImage(img, 0, 0);
+
+                    canvas.setWidth(originalWidth);
+                    canvas.setHeight(originalHeight);
+
+                    const fabricCanvasEl = canvas.wrapperEl;
+                    if (fabricCanvasEl) {
+                        fabricCanvasEl.style.position = 'absolute';
+                        fabricCanvasEl.style.left = '0';
+                        fabricCanvasEl.style.top = '0';
+                    }
+
+                    applyZoom(1.0);
+
+                    
+                    // Load existing shapes from metadata if available
+                    if (task.metadata && task.metadata.fabricJSON) {
+                        console.log("Loading existing fabric data");
+                        canvas.loadFromJSON(task.metadata.fabricJSON, function () {
+                            canvas.renderAll();
+                            saveState();
+                        });
+                    }
+
+                    setTool(tools.SELECT);
+                };
+
+                // Show rejection feedback if task was rejected
+                if (task.status === 'REJECTED' && task.feedback) {
+                    const msg = `⚠️ TASK WAS REJECTED: ${task.feedback}`;
+                    alert(msg);
+                }
+            })
+            .catch(err => {
+                console.error("Error loading task:", err);
+                alert(`Error loading task: ${err.message}\n\nPlease check:\n1. Are you logged in?\n2. Does task ID ${taskId} exist?\n3. Check browser console for details.`);
+            });
     </script>
 </body>
 

@@ -7,9 +7,7 @@ from segmentation.api.segmenter import MyTasksAPIView
 from segmentation.views import my_tasks_view, task_detail_view
 from segmentation.api.segmenter import TaskDetailAPIView
 from segmentation.api.ai import AIPreSegmentationAPIView
-from segmentation.api.qa import QADecisionAPIView
 from segmentation.views import qa_tool_view 
-
 from segmentation.api.qa import QADecisionAPIView, QADashboardAPIView 
 from segmentation.views import qa_tool_view, qa_dashboard_view  
 
@@ -79,6 +77,5 @@ urlpatterns = [
     path('qa/task/<int:task_id>/', qa_tool_view, name='qa_tool_page'),
 
     path('api/qa/dashboard/', QADashboardAPIView.as_view(), name='qa-dashboard-api'),
-
     path('qa/dashboard/', qa_dashboard_view, name='qa-dashboard-page'),
 ]

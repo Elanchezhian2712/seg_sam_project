@@ -5,10 +5,17 @@ import os
 def media_path_to_url(file_path: str) -> str:
     """
     Convert absolute filesystem media path to MEDIA URL
-    Works on Windows & Linux
+    Safe: never produces ../ in URLs
     """
-    media_root = os.path.normpath(str(settings.MEDIA_ROOT))
-    file_path = os.path.normpath(file_path)
+    media_root = os.path.abspath(settings.MEDIA_ROOT)
+    file_path = os.path.abspath(file_path)
 
-    relative_path = os.path.relpath(file_path, media_root)
-    return settings.MEDIA_URL + relative_path.replace("\\", "/")
+    # 🔒 Security + correctness check
+    if not file_path.startswith(media_root):
+        raise ValueError(
+            f"File path is outside MEDIA_ROOT: {file_path}"
+        )
+
+    relative_path = file_path[len(media_root):].lstrip(os.sep)
+
+    return settings.MEDIA_URL + relative_path.replace(os.sep, "/")

@@ -55,6 +55,7 @@ MIDDLEWARE = [
 
 ROOT_URLCONF = 'core.urls'
 AUTH_USER_MODEL = 'accounts.User'
+DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 TEMPLATES = [
     {
@@ -82,7 +83,7 @@ DATABASES = {
         'ENGINE': 'django.db.backends.postgresql',
         'NAME': 'segmentation_db',
         'USER': 'postgres',
-        'PASSWORD': 'Elan@2712',
+        'PASSWORD': 'Admin@123#',
         'HOST': 'localhost',
         'PORT': '5432',
     }
@@ -123,7 +124,10 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
-STATIC_URL = 'static/'
+STATIC_URL = "/static/"
+
+# ✅ REQUIRED to serve app-level static files
+STATICFILES_DIRS = []
 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
